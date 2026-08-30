@@ -525,7 +525,7 @@ tr:last-child td{border-bottom:none;}
 /* Versão do programa. NÃO editar à mão: o build.sh carimba a data e a hora
    aqui ao gerar o arquivo. É ela que nomeia o cache do service worker e faz o
    celular perceber que existe versão nova. */
-const VERSAO = '2026-08-30 17:59';
+const VERSAO = '2026-08-30 18:42';
 /* =========================================================
    FINANÇAS CASAL — offline, dados no localStorage
    Mayky e Mari. Ver CLAUDE.md para as regras de negócio.
@@ -1371,6 +1371,63 @@ function gravarParcelado(d){
       compraId: compraId, parcelaN: i+1, parcelaDe: d.parcelas
     }));
   }
+}
+
+/**
+ * Reescreve uma compra parcelada que JÁ EXISTE — para quando o número de
+ * parcelas, o valor ou a data foram digitados errado.
+ *
+ * NÃO é apagar e criar de novo. As parcelas que continuam existindo mantêm o
+ * MESMO id. Isso é o que importa para a sincronização: ela trabalha registro a
+ * registro, e id novo chegaria no aparelho do outro como "apagou uma parcela e
+ * criou outra" em vez de "corrigiu esta".
+ *
+ * O `pago` só sobrevive quando o mês da fatura NÃO mudou. Se a parcela 5 saiu
+ * de agosto para setembro, ela não pode continuar marcada como paga — a fatura
+ * de setembro ainda nem venceu. Guardar o `pago` pelo número da parcela, sem
+ * olhar o mês, seria a forma silenciosa de sumir com uma dívida.
+ */
+function regravarParcelada(compraId, d){
+  const compra = DB.compras.filter(function(c){ return c.id === compraId; })[0];
+  if(!compra) return 0;
+  const c = cartao(d.cartaoId);
+  if(!c) return 0;
+
+  /* guarda as atuais por número de parcela, antes de tirá-las da lista */
+  const antigas = {};
+  DB.lancamentos.forEach(function(l){
+    if(l.compraId === compraId) antigas[l.parcelaN] = l;
+  });
+  DB.lancamentos = DB.lancamentos.filter(function(l){ return l.compraId !== compraId; });
+
+  const valores  = dividirParcelas(d.total, d.parcelas);
+  const primeira = faturaDaCompra(d.data, c.diaFechamento, c.diaVencimento);
+  const jaPagas  = Math.max(0, Math.min(d.jaPagas || 0, d.parcelas - 1));
+
+  for(let i = jaPagas; i < d.parcelas; i++){
+    const mesFatura = mesMais(primeira, i);
+    const velha = antigas[i+1];
+    DB.lancamentos.push(novoLancamento({
+      id: velha ? velha.id : uid(),
+      data: diaDoMes(mesFatura, c.diaVencimento),
+      descricao: d.descricao + ' (' + (i+1) + '/' + d.parcelas + ')',
+      valor: valores[i], tipo: 'saida',
+      pessoaId: d.pessoaId || '', categoriaId: d.categoriaId || '',
+      alvo: 'cartao:' + c.id, mesFatura: mesFatura,
+      pago: !!(velha && velha.pago && velha.mesFatura === mesFatura),
+      compraId: compraId, parcelaN: i+1, parcelaDe: d.parcelas
+    }));
+  }
+
+  compra.cartaoId    = c.id;
+  compra.categoriaId = d.categoriaId || '';
+  compra.descricao   = d.descricao;
+  compra.total       = d.total;
+  compra.parcelas    = d.parcelas;
+  compra.jaPagas     = jaPagas;
+  compra.dataCompra  = d.data;
+
+  return d.parcelas - jaPagas;
 }
 
 /* Apagar uma parcela sozinha deixaria a compra pela metade e a dívida errada.
@@ -2457,15 +2514,19 @@ function blocoParceladas(){
           + '<div class="lin" style="align-items:baseline;flex-wrap:wrap">'
           +   '<div style="min-width:0"><p style="font-weight:500">' + esc(c.descricao) + '</p>'
           +   '<p class="pp fra">' + (ct?esc(ct.nome):'') + ' · comprado em '
-          +   fmtDiaMes(c.dataCompra) + '</p></div>'
+          +   fmtData(c.dataCompra) + '</p></div>'
           +   '<div style="text-align:right"><p class="tab" style="font-weight:650">'
           +   $(c.total) + '</p><p class="pp fra tab">faltam ' + $(falta) + '</p></div>'
           + '</div>'
           + '<div class="trilho trilho-p" style="margin-top:9px"><div style="width:'
           + (pagas / c.parcelas * 100) + '%;background:' + (ct?ct.cor:'var(--ac)') + '"></div></div>'
-          + '<p class="pp fra tab" style="margin-top:5px">' + pagas + ' de ' + c.parcelas
-          + ' parcelas pagas'
-          + (ultima ? ' · última em ' + nomeMes(ultima.mesFatura) : '') + '</p>'
+          + '<div class="lin" style="margin-top:5px;align-items:baseline">'
+          +   '<p class="pp fra tab" style="min-width:0">' + pagas + ' de ' + c.parcelas
+          +   ' parcelas pagas'
+          +   (ultima ? ' · última em ' + nomeMes(ultima.mesFatura) : '') + '</p>'
+          +   '<button class="btn btn-2 btn-p" onclick="editarParcelada(\'' + c.id + '\')">'
+          +   'Editar</button>'
+          + '</div>'
           + '</div>';
       }).join('')
     : '<p class="ajuda">Nenhuma parcela em aberto. Bom lugar para estar.</p>')
@@ -2473,72 +2534,215 @@ function blocoParceladas(){
 }
 
 /**
- * Cadastrar compra que começou ANTES do app existir.
- * Pergunta quantas já foram pagas e cria só as que faltam: as pagas não são
- * gasto futuro nem histórico registrado, então não entram em lugar nenhum.
+ * O FORMULÁRIO DA COMPRA PARCELADA — serve para cadastrar e para corrigir.
+ *
+ * É um só de propósito: o erro que se quer corrigir (número de parcelas
+ * digitado errado) costuma vir acompanhado de outro no mesmo formulário, e
+ * manter duas telas parecidas garante que uma delas fique para trás.
+ *
+ * Sem "compra" e cadastrar = cadastrar. Preenchido = corrigir aquela.
  */
-function cadastrarParcelada(){
+function formParcelada(compra){
   if(!DB.cartoes.length){ alert('Cadastre um cartão antes.'); return; }
 
+  const corrigindo = !!compra;
+  /* Ao corrigir, o campo mostra o valor de UMA parcela — é assim que a pessoa
+     pensa a compra ("12x de 250"), e é o que ela quer conferir. */
+  const parcela = corrigindo ? Math.round(compra.total / compra.parcelas) : 0;
+
   abrirModal(
-    '<h2>Compra parcelada já em andamento</h2>'
-    + '<p class="ajuda" style="margin-bottom:16px">Para compras feitas antes de vocês '
-    + 'começarem a usar o app. As parcelas que faltam entram na projeção e no orçamento '
-    + 'dos meses certos; as já pagas não entram em lugar nenhum.</p>'
+    '<h2>' + (corrigindo ? 'Corrigir compra parcelada'
+                         : 'Compra parcelada já em andamento') + '</h2>'
+    + '<p class="ajuda" style="margin-bottom:16px">'
+    + (corrigindo
+        ? 'As parcelas que continuarem existindo mantêm o histórico. As que '
+        + 'mudarem de mês voltam a contar como não pagas, porque a fatura nova '
+        + 'ainda não venceu.'
+        : 'Para compras feitas antes de vocês começarem a usar o app. As parcelas '
+        + 'que faltam entram na projeção e no orçamento dos meses certos; as já '
+        + 'pagas não entram em lugar nenhum.')
+    + '</p>'
+
     + '<div class="campo"><label>Descrição</label>'
-    + '<input id="ppDesc" placeholder="Notebook, geladeira…"></div>'
-    + '<div class="campo"><label>Cartão</label><select id="ppCartao">'
+    + '<input id="ppDesc" placeholder="Notebook, geladeira…" value="'
+    + (corrigindo ? esc(compra.descricao) : '') + '"></div>'
+
+    + '<div class="campo"><label>Cartão</label>'
+    + '<select id="ppCartao" onchange="parceladaDataMudou()">'
     + DB.cartoes.map(function(c){
-        return '<option value="' + c.id + '">' + esc(c.nome) + '</option>';
+        return '<option value="' + c.id + '"'
+          + (corrigindo && compra.cartaoId === c.id ? ' selected' : '') + '>'
+          + esc(c.nome) + '</option>';
       }).join('') + '</select></div>'
+
     + '<div class="grade g2" style="gap:12px">'
     +   '<div class="campo"><label>Valor da parcela</label>'
-    +   '<input id="ppParcela" inputmode="decimal" placeholder="0,00"></div>'
+    +   '<input id="ppParcela" inputmode="decimal" placeholder="0,00" '
+    +   'oninput="parceladaResumo()" value="'
+    +   (corrigindo ? fmtSimples(parcela) : '') + '"></div>'
     +   '<div class="campo"><label>Total de parcelas</label>'
-    +   '<input id="ppTotal" type="number" min="2" max="60" value="10"></div>'
+    +   '<input id="ppTotal" type="number" min="2" max="60" '
+    +   'oninput="parceladaDataMudou()" value="'
+    +   (corrigindo ? compra.parcelas : 10) + '"></div>'
     + '</div>'
+
+    /* A data é o caminho curto: com ela o app conta sozinho o que já venceu.
+       O número continua editável para quem prefere ir direto, ou para quem
+       atrasou uma parcela e sabe que a conta pela data não bate. */
+    + '<div class="campo"><label>Data da compra</label>'
+    + '<input id="ppData" type="date" onchange="parceladaDataMudou()" value="'
+    + (corrigindo ? (compra.dataCompra || '') : '') + '">'
+    + '<p class="ajuda">Preenchendo aqui, o app calcula sozinho quantas parcelas '
+    + 'já venceram.</p></div>'
+
     + '<div class="campo"><label>Quantas já foram pagas</label>'
-    + '<input id="ppPagas" type="number" min="0" max="59" value="0">'
-    + '<p class="ajuda">Se já pagou 4 de 10, o app cria só as 6 que faltam.</p></div>'
-    + '<div class="campo"><label>Categoria</label><select id="ppCat">'
+    + '<input id="ppPagas" type="number" min="0" max="59" '
+    + 'oninput="parceladaResumo()" value="'
+    + (corrigindo ? (compra.jaPagas || 0) : 0) + '">'
+    + '<p class="ajuda" id="ppPagasAjuda">Se já pagou 4 de 10, o app cria só as '
+    + '6 que faltam.</p></div>'
+
+    + '<div class="campo"><label>Categoria</label><select id="ppCat" '
+    + 'onchange="parceladaResumo()">'
     + '<option value="">Sem categoria</option>'
     + DB.categorias.filter(function(c){ return c.tipo === 'saida'; })
-        .map(function(c){ return '<option value="' + c.id + '">' + esc(c.nome) + '</option>'; }).join('')
+        .map(function(c){
+          return '<option value="' + c.id + '"'
+            + (corrigindo && compra.categoriaId === c.id ? ' selected' : '') + '>'
+            + esc(c.nome) + '</option>';
+        }).join('')
     + '</select></div>'
-    + seletorDono('ppPessoa', quemEstaUsando(), 'De quem')
+
+    + seletorDono('ppPessoa', parceladaDeQuem(compra), 'De quem')
+
+    /* O resumo existe para não haver conta escondida: o total é sempre
+       parcela x quantidade, e isso fica escrito na tela antes de salvar. */
+    + '<p class="ajuda" id="ppResumo" style="min-height:34px"></p>'
+
     + '<div class="modal-acoes">'
     + '<button class="btn btn-2" onclick="fecharModal()">Cancelar</button>'
-    + '<button class="btn btn-1" onclick="salvarParcelada()">Cadastrar</button></div>');
+    + '<button class="btn btn-1" onclick="salvarParcelada('
+    + (corrigindo ? "'" + compra.id + "'" : '') + ')">'
+    + (corrigindo ? 'Salvar correção' : 'Cadastrar') + '</button></div>');
+
+  parceladaResumo();
 }
 
-function salvarParcelada(){
-  const desc = (v('ppDesc')||'').trim();
+function cadastrarParcelada(){ formParcelada(null); }
+
+function editarParcelada(id){
+  const c = DB.compras.filter(function(x){ return x.id === id; })[0];
+  if(!c){ alert('Compra não encontrada.'); return; }
+  formParcelada(c);
+}
+
+/* De quem é a compra: ao corrigir, quem já estava nas parcelas. */
+function parceladaDeQuem(compra){
+  if(!compra) return quemEstaUsando();
+  const uma = DB.lancamentos.filter(function(l){ return l.compraId === compra.id; })[0];
+  return uma ? (uma.pessoaId || '') : quemEstaUsando();
+}
+
+/* A data (ou o cartão, ou o total) mudou: refaz a conta de quantas venceram.
+   Só mexe no campo das pagas a partir DESTES campos — digitar direto no campo
+   das pagas não pode ser desfeito por um recálculo. */
+function parceladaDataMudou(){
+  const data  = v('ppData');
+  const ct    = cartao(v('ppCartao'));
+  const ajuda = document.getElementById('ppPagasAjuda');
+  const campo = document.getElementById('ppPagas');
+
+  if(data && ct && campo){
+    const n = Number(v('ppTotal')) || 0;
+    const primeira = faturaDaCompra(data, ct.diaFechamento, ct.diaVencimento);
+    /* Venceu tudo o que caiu em fatura de mês ANTERIOR ao de hoje. A fatura
+       deste mês ainda está correndo, então a parcela dela é a próxima. */
+    let venceram = Math.max(0, mesesEntre(primeira, mesAtual()));
+    if(n >= 2) venceram = Math.min(venceram, n - 1);
+    campo.value = venceram;
+
+    if(ajuda){
+      ajuda.textContent = venceram === 0
+        ? 'Pela data, nenhuma parcela venceu ainda — o app cria todas.'
+        : 'Pela data, ' + venceram + (venceram === 1 ? ' parcela já venceu.'
+                                                     : ' parcelas já venceram.')
+          + ' Corrija à mão se alguma ficou atrasada.';
+    }
+  } else if(ajuda){
+    ajuda.textContent = 'Se já pagou 4 de 10, o app cria só as 6 que faltam.';
+  }
+  parceladaResumo();
+}
+
+/* O que vai acontecer, escrito antes de salvar. */
+function parceladaResumo(){
+  const el = document.getElementById('ppResumo');
+  if(!el) return;
+
+  const ct      = cartao(v('ppCartao'));
+  const parcela = lerDinheiro(v('ppParcela')) || 0;
+  const n       = Number(v('ppTotal')) || 0;
+  const pagas   = Math.max(0, Number(v('ppPagas')) || 0);
+
+  if(!ct || parcela <= 0 || n < 2){ el.textContent = ''; return; }
+  if(pagas >= n){
+    el.innerHTML = '<b>As já pagas precisam ser menos que o total.</b>';
+    return;
+  }
+
+  const primeira = faturaDaCompra(parceladaDataDaCompra(ct, pagas),
+                                  ct.diaFechamento, ct.diaVencimento);
+  const faltam = n - pagas;
+
+  el.innerHTML = n + '× de ' + fmt(parcela) + ' · total ' + fmt(parcela * n) + '<br>'
+    + faltam + (faltam === 1 ? ' parcela entra' : ' parcelas entram') + ' no app: '
+    + nomeMes(mesMais(primeira, pagas)) + ' até ' + nomeMes(mesMais(primeira, n - 1));
+}
+
+/* A data que vai para o registro.
+   Com data preenchida, é ela quem manda — inclusive sobre o número de pagas,
+   que a pessoa pode ter corrigido à mão.
+   Sem data, reconstrói para trás: quem já pagou 4 comprou uns 4 meses atrás.
+   O dia escolhido é um antes do fechamento, para a compra cair na fatura
+   daquele mês e não na seguinte. */
+function parceladaDataDaCompra(ct, pagas){
+  return v('ppData') || diaDoMes(mesMais(mesAtual(), -pagas),
+                                 Math.max(1, ct.diaFechamento - 1));
+}
+
+function salvarParcelada(compraId){
+  const desc    = (v('ppDesc') || '').trim();
   const parcela = lerDinheiro(v('ppParcela'));
-  const total = Number(v('ppTotal'));
-  const pagas = Number(v('ppPagas'));
+  const total   = Number(v('ppTotal'));
+  const pagas   = Number(v('ppPagas'));
 
   if(!desc){ alert('Descreva a compra.'); return; }
   if(!parcela || parcela <= 0){ alert('Valor da parcela inválido.'); return; }
-  if(!Number.isInteger(total) || total < 2){ alert('O total de parcelas precisa ser 2 ou mais.'); return; }
+  if(!Number.isInteger(total) || total < 2){
+    alert('O total de parcelas precisa ser 2 ou mais.'); return;
+  }
   if(!Number.isInteger(pagas) || pagas < 0 || pagas >= total){
     alert('As já pagas precisam ser menos que o total.'); return;
   }
 
   const ct = cartao(v('ppCartao'));
+  if(!ct){ alert('Escolha um cartão.'); return; }
 
-  /* A data da compra é reconstruída para trás: se já pagou 4 parcelas, a compra
-     foi uns 4 meses atrás. Assim a primeira parcela que falta cai no mês certo. */
-  const mesPrimeira = mesMais(mesAtual(), -pagas);
-  const dataCompra = diaDoMes(mesPrimeira, Math.max(1, ct.diaFechamento - 1));
-
-  gravarParcelado({
+  const dados = {
     cartaoId: ct.id, total: parcela * total, parcelas: total,
-    descricao: desc, data: dataCompra,
+    descricao: desc, data: parceladaDataDaCompra(ct, pagas),
     categoriaId: v('ppCat') || '', pessoaId: v('ppPessoa') || '', jaPagas: pagas
-  });
+  };
 
-  salvarDB(); fecharModal(); desenhar();
-  toast((total - pagas) + ' parcelas criadas.');
+  if(compraId){
+    const criadas = regravarParcelada(compraId, dados);
+    salvarDB(); fecharModal(); desenhar();
+    toast('Compra corrigida: ' + criadas + ' parcelas em aberto.');
+  } else {
+    gravarParcelado(dados);
+    salvarDB(); fecharModal(); desenhar();
+    toast((total - pagas) + ' parcelas criadas.');
+  }
 }
 
 /* Quanto de cada uma das próximas faturas já está tomado. */
