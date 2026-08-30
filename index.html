@@ -255,11 +255,18 @@ tr:last-child td{border-bottom:none;}
 .rolar{overflow-x:auto;-webkit-overflow-scrolling:touch;}
 .vazio{padding:30px;text-align:center;color:var(--fra);font-size:14px;}
 
-.modal-bg{position:fixed;inset:0;background:rgba(10,12,18,.55);z-index:100;
-          display:flex;align-items:flex-start;justify-content:center;
-          overflow-y:auto;padding:28px 14px;}
+/* z-index 200: ACIMA da gaveta (120). Sem isto o pop-up nasce atrás dela no
+   celular, que foi exatamente o defeito relatado. Ordem das camadas do app:
+   gaveta 110/120 · modal 200 · aviso 300 · tela de acesso 400. */
+.modal-bg{position:fixed;inset:0;background:rgba(10,12,18,.55);z-index:200;
+          display:flex;align-items:center;justify-content:center;
+          overflow-y:auto;
+          padding:calc(20px + env(safe-area-inset-top)) 14px
+                  calc(20px + env(safe-area-inset-bottom));}
+/* margin:auto centraliza o que é curto e continua deixando rolar o que é longo —
+   align-items:center sozinho cortaria o topo de um modal mais alto que a tela. */
 .modal{background:var(--sup);border-radius:var(--r);max-width:640px;width:100%;
-       padding:24px;margin-bottom:30px;}
+       padding:24px;margin:auto;}
 .modal.largo{max-width:900px;}
 .modal h2{font-size:18px;font-weight:650;margin-bottom:16px;text-transform:none;
           letter-spacing:0;color:var(--txt);}
@@ -267,7 +274,7 @@ tr:last-child td{border-bottom:none;}
              border-top:1px solid var(--borda);padding-top:16px;}
 
 .toast{position:fixed;bottom:22px;right:22px;background:var(--txt);color:var(--bg);
-       padding:13px 20px;border-radius:12px;font-size:14px;font-weight:600;z-index:200;
+       padding:13px 20px;border-radius:12px;font-size:14px;font-weight:600;z-index:300;
        box-shadow:0 8px 24px rgba(0,0,0,.25);}
 @media(max-width:760px){.toast{left:14px;right:14px;bottom:calc(14px + env(safe-area-inset-bottom));}}
 
@@ -471,7 +478,7 @@ const LOGO_IOS = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAYAAAA9
 /* Versão do programa. NÃO editar à mão: o build.sh carimba a data e a hora
    aqui ao gerar o arquivo. É ela que nomeia o cache do service worker e faz o
    celular perceber que existe versão nova. */
-const VERSAO = '2026-08-30 17:33';
+const VERSAO = '2026-08-30 17:37';
 /* =========================================================
    FINANÇAS CASAL — offline, dados no localStorage
    Mayky e Mari. Ver CLAUDE.md para as regras de negócio.
@@ -909,11 +916,22 @@ function toast(msg){
 }
 
 function abrirModal(html, largo){
+  /* No celular a gaveta fica aberta por cima do que a pessoa acabou de pedir.
+     Fechar aqui cobre todo modal do app, inclusive os que ainda não existem. */
+  try{ if(typeof fecharGaveta === 'function') fecharGaveta(); }catch(e){}
+
   document.getElementById('modalRoot').innerHTML =
     '<div class="modal-bg" onclick="if(event.target===this) fecharModal()">'
     + '<div class="modal' + (largo?' largo':'') + '">' + html + '</div></div>';
+
+  /* fecharGaveta() destravou a rolagem do body; sem travar de novo, o fundo
+     rola atrás do modal quando o dedo passa da borda dele. */
+  document.body.style.overflow = 'hidden';
 }
-function fecharModal(){ document.getElementById('modalRoot').innerHTML = ''; }
+function fecharModal(){
+  document.getElementById('modalRoot').innerHTML = '';
+  document.body.style.overflow = '';
+}
 
 function v(id){ const e = document.getElementById(id); return e ? e.value : ''; }
 function marcado(id){ const e = document.getElementById(id); return e ? e.checked : false; }
@@ -5070,11 +5088,16 @@ function gavetaAberta(){
   return document.getElementById('app').classList.contains('gaveta-aberta');
 }
 
-/* Escolher uma página fecha a gaveta. Envolvemos o goTo em vez de editá-lo
-   para não mexer no 02_core.js mais do que o necessário. */
-const goToOriginal = window.goTo;
-window.goTo = function(id){
-  const r = goToOriginal.apply(this, arguments);
+/* Escolher uma página fecha a gaveta. Envolvemos a função em vez de editá-la
+   para não mexer no 02_core.js mais do que o necessário.
+
+   ATENÇÃO ao nome: aqui a navegação chama-se irPara(), não goTo() como no RH.
+   Envolver um nome que não existe não dá erro — simplesmente não acontece, e o
+   defeito só aparece no celular, com a gaveta ficando aberta por cima da tela
+   nova. Foi assim que passou despercebido até 30/08/2026. */
+const irParaOriginal = window.irPara;
+window.irPara = function(id){
+  const r = irParaOriginal.apply(this, arguments);
   if(gavetaAberta()) fecharGaveta();
   return r;
 };
@@ -5194,10 +5217,10 @@ function marcarRolavel(t){
   caixa.classList.toggle('rolavel', caixa.scrollWidth > caixa.clientWidth + 4);
 }
 
-/* Roda depois de cada desenho de tela. */
-const renderOriginal = window.render;
-window.render = function(){
-  const r = renderOriginal.apply(this, arguments);
+/* Roda depois de cada desenho de tela. Aqui a função chama-se desenhar(). */
+const desenharOriginal = window.desenhar;
+window.desenhar = function(){
+  const r = desenharOriginal.apply(this, arguments);
   try{ if(telaEstreita()) prepararTabelas(); }catch(e){ console.warn('prepararTabelas:', e); }
   return r;
 };
@@ -5212,12 +5235,15 @@ window.render = function(){
    começa com "render". Nada de timing, nada de observador — se a tela se
    redesenhou, foi por uma dessas funções.
 
-   Vale para as telas que ainda nem existem: qualquer render* nova entra junto,
-   desde que declarada antes deste arquivo (ele é o último do build.sh). */
-(function envolverRenders(){
+   Vale para as telas que ainda nem existem: qualquer desenhar* nova entra
+   junto, desde que declarada antes deste arquivo (ele é o último do build.sh). */
+(function envolverDesenhos(){
   Object.getOwnPropertyNames(window)
     .filter(function(nome){
-      return /^render[A-Z]/.test(nome) && typeof window[nome] === 'function';
+      /* desenharPainel, desenharCartoes... e a renderSync, que veio do RH com
+         o nome antigo e continua sendo chamada assim pelo 09b_drive.js. */
+      return (/^desenhar[A-Z]/.test(nome) || nome === 'renderSync')
+        && typeof window[nome] === 'function';
     })
     .forEach(function(nome){
       const original = window[nome];
