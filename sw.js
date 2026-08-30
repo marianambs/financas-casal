@@ -1,6 +1,6 @@
 /* Service worker do Financas Casal - GERADO por fonte/build-github.sh.
    Nao edite a mao: o proximo build sobrescreve. */
-const VERSAO_CACHE = '2026-08-29-1';
+const VERSAO_CACHE = '2026-08-30-17-07';
 /* Corpo do service worker. O build-github.sh cola o `const VERSAO_CACHE` acima
    disto e grava o resultado em ../sw.js - NAO registre este arquivo diretamente.
 

@@ -430,9 +430,10 @@ tr:last-child td{border-bottom:none;}
 <div id="toastRoot"></div>
 
 <script>
-/* Versão do programa. SOBE À MÃO a cada publicação — é ela que nomeia o cache do
-   service worker e dispara a barra de "versão nova" nos aparelhos. */
-const VERSAO = '2026-08-29 · 1';
+/* Versão do programa. NÃO editar à mão: o build.sh carimba a data e a hora
+   aqui ao gerar o arquivo. É ela que nomeia o cache do service worker e faz o
+   celular perceber que existe versão nova. */
+const VERSAO = '2026-08-30 17:07';
 /* =========================================================
    FINANÇAS CASAL — offline, dados no localStorage
    Mayky e Mari. Ver CLAUDE.md para as regras de negócio.
@@ -473,7 +474,6 @@ function defaultDB(){
     orcamentos: {},
 
     config: {
-      nomeCasa: '',
       avisarTetoEstourado: true,
       /* false até o primeiro uso ser concluído. É o que dispara a tela de
          boas-vindas, onde se cadastram as pessoas da casa. */
@@ -3322,13 +3322,6 @@ function blocoConfiguracoes(){
   const eu = pessoa(quemEstaUsando());
 
   return '<div class="card">'
-  + '<h2>Esta casa</h2>'
-  + '<div class="campo"><label>Nome da casa</label>'
-  + '<input value="' + esc(DB.config.nomeCasa) + '" '
-  + 'onchange="DB.config.nomeCasa=this.value.trim()||\'Nossa casa\'; salvarDB(); desenhar()"></div>'
-  + '</div>'
-
-  + '<div class="card">'
   + '<h2>Este aparelho</h2>'
   + '<p class="ajuda" style="margin-top:-10px;margin-bottom:14px">'
   + 'Estas três não sincronizam: são deste aparelho. Se viajassem, o celular da outra '
@@ -3614,13 +3607,17 @@ function telaBoasVindas(){
     + 'Bem-vindo</h1>'
     + '<p class="mut" style="margin-top:6px">Vamos configurar em um minuto.</p></div>'
 
-    + '<div class="card">'
-    +   '<div class="campo">'
-    +     '<label>Nome da casa</label>'
-    +     '<input id="bvCasa" placeholder="Nossa casa" value="' + esc(DB.config.nomeCasa) + '">'
-    +     '<p class="ajuda">Só aparece no topo das telas. Pode deixar como está.</p>'
-    +   '</div>'
-    + '</div>'
+    + (typeof sincronizarDrive === 'function'
+      ? '<div class="card" style="border:1px solid var(--ac)">'
+        + '<h2>Já uso em outro aparelho</h2>'
+        + '<p class="ajuda" style="margin-top:-8px;margin-bottom:14px">'
+        + 'Entre com a mesma conta Google que vocês usam no app e eu trago tudo '
+        + 'para cá — pessoas, contas, cartões e lançamentos.</p>'
+        + '<button class="btn btn-1" style="width:100%" onclick="entrarComGoogle()">'
+        + 'Entrar com Google e trazer meus dados</button></div>'
+        + '<p class="ajuda" style="text-align:center;margin:-8px 0 18px">'
+        + 'ou configure do zero</p>'
+      : '')
 
     + '<div class="card">'
     +   '<h2>Quem vai usar</h2>'
@@ -3685,7 +3682,6 @@ function bvConcluir(){
     o=>o.toLowerCase()===n.toLowerCase()) !== i);
   if(repetido){ alert('Tem dois nomes iguais. Cada pessoa precisa de um nome diferente.'); return; }
 
-  DB.config.nomeCasa = (document.getElementById('bvCasa').value||'').trim() || 'Nossa casa';
   DB.pessoas = rascunhoPessoas
     .filter(p=>(p.nome||'').trim())
     .map(p=>({id: uid(), nome: p.nome.trim(), emoji: p.emoji, cor: p.cor,
@@ -3697,6 +3693,33 @@ function bvConcluir(){
      em Ajustes se o celular for de outra pessoa. */
   mudarAparelho('pessoaPadrao', DB.pessoas[0].id);
   telaCriarPin(DB.pessoas[0].id);
+}
+
+/* Traz os dados do Drive para um aparelho novo.
+   Precisa sair de um TOQUE: o Safari do iPhone bloqueia o pedido de acesso ao
+   Google quando ele parte sozinho, tratando como pop-up. Por isso esta função
+   nunca é chamada na abertura — só a partir de um botão. */
+async function entrarComGoogle(){
+  if(typeof sincronizarDrive !== 'function'){
+    alert('A sincronização com o Drive só existe na versão publicada do app.');
+    return;
+  }
+  try{
+    await sincronizarDrive();
+  }catch(e){ /* o próprio sincronizarDrive já explica a falha */ }
+
+  /* Se veio gente do Drive, o cadastro daqui não é mais necessário: recomeça o
+     fluxo, que agora vai cair direto na tela de entrar. */
+  if(DB.pessoas.length){
+    DB.config.configurado = true;
+    salvarDB();
+    pessoaEscolhida = null;
+    abrirApp();
+  } else {
+    alert('Não achei dados nessa conta do Google.\n\n'
+        + 'Se este é o primeiro aparelho, siga com o cadastro abaixo. '
+        + 'Se não, confira se entrou com a mesma conta que vocês usam no app.');
+  }
 }
 
 /* ---------------------------------------------------------
@@ -3779,7 +3802,7 @@ function telaEntrar(){
 
   telaCheia(
     '<div style="text-align:center;margin-bottom:24px">'
-    + '<h1 style="font-size:22px;font-weight:700">' + esc(DB.config.nomeCasa || 'Finanças') + '</h1>'
+    + '<h1 style="font-size:22px;font-weight:700">Finanças</h1>'
     + '<p class="mut" style="margin-top:4px">'
     + (varias ? 'Quem está usando?' : 'Digite o seu PIN') + '</p></div>'
 
@@ -3809,8 +3832,12 @@ function telaEntrar(){
     +   'onclick="tentarEntrar()">Entrar</button>'
     + '</div>'
 
-    + '<p style="text-align:center;margin-top:16px">'
-    + '<button class="btn btn-2 btn-p" onclick="telaEsqueciPin()">Esqueci o PIN</button></p>'
+    + '<p style="text-align:center;margin-top:16px;display:flex;gap:8px;justify-content:center">'
+    + '<button class="btn btn-2 btn-p" onclick="telaEsqueciPin()">Esqueci o PIN</button>'
+    + (typeof sincronizarDrive === 'function' && !meta().driveFileId
+      ? '<button class="btn btn-2 btn-p" onclick="entrarComGoogle()">Conectar ao Google</button>'
+      : '')
+    + '</p>'
   );
   setTimeout(function(){ const e=document.getElementById('pinEntrar'); if(e) e.focus(); }, 60);
 }
@@ -3837,6 +3864,14 @@ function tentarEntrar(){
   destravadoEm = Date.now();
   mudarAparelho('pessoaPadrao', p.id);
   iniciarApp();
+
+  /* Sincroniza aproveitando o toque que acabou de acontecer. Só quando este
+     aparelho já usou o Drive alguma vez — senão viraria um pedido de permissão
+     do Google surgindo do nada, logo na entrada. */
+  if(typeof sincronizarDrive === 'function' && typeof meta === 'function'
+     && meta().driveFileId && navigator.onLine){
+    sincronizarDrive();
+  }
 }
 
 /* ---------------------------------------------------------
@@ -5008,7 +5043,7 @@ window.addEventListener('resize', function(){
      app inteiro continua funcionando; só este cartão fica desligado, e a tela
      explica como ligar. Foi feito assim para o app poder ser publicado e usado
      antes de o dono terminar a papelada no console do Google. */
-  const CLIENT_ID = '';
+  const CLIENT_ID = '222924197737-3311n3pr1p3r8ng11lf37jshha5epl57.apps.googleusercontent.com';
 
   /* drive.file é o menor escopo que resolve: o app só enxerga o arquivo que ele
      mesmo criou. Não dá para listar, ler nem apagar mais nada do Drive. */
