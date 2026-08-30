@@ -106,7 +106,6 @@ body{
   -webkit-tap-highlight-color:transparent;
 }
 .navbtn+.navbtn{margin-top:3px;}
-.navbtn:hover{background:var(--sup2);color:var(--txt);}
 .navbtn.ativo{background:var(--ac-fr);color:var(--ac);font-weight:650;}
 .navbtn .ico{width:20px;height:20px;flex-shrink:0;opacity:.8;}
 .navbtn.ativo .ico{opacity:1;}
@@ -121,7 +120,6 @@ body{
   font-weight:600;font-size:14px;font-family:inherit;color:var(--txt);cursor:pointer;
   text-align:left;-webkit-tap-highlight-color:transparent;
 }
-#quemSou:hover{border-color:var(--ac);}
 #quemSou .rot{font-size:10px;font-weight:400;color:var(--fra);display:block;line-height:1;}
 #quemSou .seta{margin-left:auto;color:var(--fra);font-size:11px;}
 #versaoApp{margin-top:8px;padding-left:2px;}
@@ -160,14 +158,62 @@ body{
   -webkit-tap-highlight-color:transparent;transition:filter .12s,background .12s;
 }
 .btn-1{background:var(--ac);color:#fff;}
-.btn-1:hover{filter:brightness(1.08);}
 .btn-2{background:transparent;color:var(--mut);border-color:var(--borda2);}
-.btn-2:hover{background:var(--sup2);color:var(--txt);}
 .btn-x{background:transparent;color:var(--neg);}
-.btn-x:hover{background:var(--neg-fr);}
 .btn:disabled{opacity:.5;cursor:not-allowed;}
 /* botão de linha de lista — menor, mas ainda alcançável pelo dedo */
 .btn-p{min-height:36px;padding:0 12px;font-size:13.5px;border-radius:10px;}
+
+/* =========================================================
+   RESPOSTA AO TOQUE E AO MOUSE
+
+   Botão que não se mexe parece botão que não funcionou. No celular é pior:
+   não há cursor para mudar de forma nem som de clique — o único aviso de que
+   o toque pegou é o próprio botão reagir.
+
+   Discreto de propósito: 3% de encolhida e um escurecimento leve. Dá para o
+   olho registrar e não vira brinquedo.
+   ========================================================= */
+button,.btn,.navbtn,#quemSou{
+  transition:transform .09s ease, filter .14s ease, background .14s ease,
+             border-color .14s ease, box-shadow .14s ease;
+}
+
+/* PRESSIONADO — vale para o dedo e para o mouse.
+   No toque o :active acende já no encostar do dedo, antes do clique: é isso
+   que faz a ação parecer imediata mesmo quando a tela demora a trocar. */
+button:active,.btn:active,.navbtn:active,#quemSou:active{
+  transform:scale(.97);
+  filter:brightness(.93);
+}
+.btn:disabled:active{transform:none;filter:none;}
+
+/* SÓ ONDE EXISTE PONTEIRO DE VERDADE.
+   Sem este cerco o :hover COLA no celular: depois do toque o botão fica aceso
+   até se tocar em outro lugar, e parece que continua selecionado. */
+@media (hover:hover) and (pointer:fine){
+  .navbtn:hover{background:var(--sup2);color:var(--txt);}
+  #quemSou:hover{border-color:var(--ac);}
+  .btn-1:hover{filter:brightness(1.08);}
+  .btn-2:hover{background:var(--sup2);color:var(--txt);}
+  .btn-x:hover{background:var(--neg-fr);}
+  /* o leve levantar que dá relevo no PC — e o afundar ao clicar */
+  .btn:hover{transform:translateY(-1px);}
+  .btn:active{transform:translateY(0) scale(.97);}
+  .btn:disabled:hover{transform:none;filter:none;}
+}
+
+/* Enquanto algo está em curso. */
+@keyframes girar{to{transform:rotate(360deg);}}
+.girando{display:inline-block;animation:girar .9s linear infinite;}
+
+/* Quem pediu menos movimento no aparelho recebe menos movimento. */
+@media (prefers-reduced-motion:reduce){
+  button,.btn,.navbtn,#quemSou{transition:none;}
+  button:active,.btn:active,.navbtn:active,#quemSou:active{transform:none;}
+  .btn:hover{transform:none;}
+  .girando{animation:none;}
+}
 
 label{display:block;font-size:13px;font-weight:600;color:var(--mut);margin-bottom:5px;}
 input,select,textarea{
@@ -479,7 +525,7 @@ tr:last-child td{border-bottom:none;}
 /* Versão do programa. NÃO editar à mão: o build.sh carimba a data e a hora
    aqui ao gerar o arquivo. É ela que nomeia o cache do service worker e faz o
    celular perceber que existe versão nova. */
-const VERSAO = '2026-08-30 17:54';
+const VERSAO = '2026-08-30 17:59';
 /* =========================================================
    FINANÇAS CASAL — offline, dados no localStorage
    Mayky e Mari. Ver CLAUDE.md para as regras de negócio.
@@ -5026,6 +5072,27 @@ function desdeQuando(ts){
   return d === 1 ? 'ontem' : `há ${d} dias`;
 }
 
+/* O botão desaparece quando a sincronização termina: a barra inteira se
+   redesenha. Sem um estado no meio, tocar nele parece não ter feito nada — a
+   página simplesmente troca de texto, que foi o relatado.
+
+   Aqui ele fica desabilitado e girando enquanto trabalha. Também impede o
+   toque duplo de disparar duas sincronizações ao mesmo tempo. */
+async function sincronizarDaBarra(botao){
+  if(!botao || botao.disabled) return;
+  const antes = botao.innerHTML;
+  botao.disabled = true;
+  botao.innerHTML = '<span class="girando">⟳</span> Sincronizando…';
+  try{
+    await sincronizarAgora();
+  } finally {
+    /* Se a barra já se redesenhou, este botão nem está mais na tela. Devolver
+       o texto a um elemento solto não faz mal nenhum — só não aparece. */
+    botao.disabled = false;
+    botao.innerHTML = antes;
+  }
+}
+
 function atualizarIndicadorSync(){
   const el = document.getElementById('syncIndicador');
   if(!el) return;
@@ -5034,7 +5101,7 @@ function atualizarIndicadorSync(){
     el.className = 'sync-ind pendente';
     el.innerHTML = `<span class="pt"></span>
       <span>Alterações não enviadas ao Drive${m.ultimaEdicao?' · última edição '+desdeQuando(m.ultimaEdicao.quando):''}</span>
-      <button class="btn btn-primary btn-sm" onclick="sincronizarAgora()">⟳ Sincronizar agora</button>`;
+      <button class="btn btn-1 btn-p" onclick="sincronizarDaBarra(this)">⟳ Sincronizar agora</button>`;
   } else if(syncConfigurada() && m.ultimaSync){
     el.className = 'sync-ind ok';
     el.innerHTML = `<span class="pt"></span><span>Tudo sincronizado com o Drive · ${desdeQuando(m.ultimaSync)}</span>`;
@@ -5042,7 +5109,7 @@ function atualizarIndicadorSync(){
     el.className = 'sync-ind neutro';
     el.innerHTML = `<span class="pt"></span>
       <span>Sincronização com o Drive ainda não configurada</span>
-      <button class="btn btn-secondary btn-sm" onclick="goTo('sync')">Configurar</button>`;
+      <button class="btn btn-2 btn-p" onclick="irPara('sync')">Configurar</button>`;
   }
 }
 
@@ -5228,14 +5295,14 @@ window.desenhar = function(){
   return r;
 };
 
-/* Envolver o render() não basta: muitas telas se redesenham por conta própria
-   (renderPontoDia(), renderFuncionarios(), renderVales()...) chamadas direto de
-   um onclick, sem passar pelo render(). Quando isso acontece, a tabela nova
-   nasce sem o tratamento e volta a rolar de lado.
+/* Envolver o desenhar() não basta: muitas telas se redesenham por conta
+   própria (desenharCartoes(), desenharAjustes(), desenharLancamentos()...)
+   chamadas direto de um onclick, sem passar pelo desenhar(). Quando isso
+   acontece, a tabela nova nasce sem o tratamento e volta a rolar de lado.
 
    Tentei um MutationObserver primeiro e ele não pegou os redesenhos de forma
    confiável. Isto aqui é determinístico: envolve TODA função global cujo nome
-   começa com "render". Nada de timing, nada de observador — se a tela se
+   começa com "desenhar". Nada de timing, nada de observador — se a tela se
    redesenhou, foi por uma dessas funções.
 
    Vale para as telas que ainda nem existem: qualquer desenhar* nova entra
@@ -5271,7 +5338,10 @@ window.addEventListener('resize', function(){
   larguraAnterior = window.innerWidth;
   if(eraEstreita === agoraEstreita) return;
   if(!agoraEstreita && gavetaAberta()) fecharGaveta();
-  try{ render(); }catch(e){}
+  /* desenhar(), não render(): o nome do RH não existe aqui, e dentro de um
+     try/catch a chamada morta não deixava rastro — girar o iPad nunca
+     redesenhava as tabelas. */
+  try{ desenhar(); }catch(e){ console.warn('redesenho ao girar:', e); }
 });
 
 /* =========================================================
@@ -5813,8 +5883,8 @@ window.addEventListener('resize', function(){
      3. MANIFEST — para o Android/Chrome oferecer a instalação.
      O manifesto em si vai embutido como data URI, mas os ÍCONES
      apontam para os PNG publicados ao lado do index.html.
-     No iPhone o manifest é ignorado — lá quem manda é o
-     <link rel="apple-touch-icon"> que está no <head>.
+     No iPhone o manifest é ignorado — lá quem manda é o link de
+     apple-touch-icon que está estático no <head>.
      --------------------------------------------------------- */
   (function(){
     if(document.querySelector('link[rel="manifest"]')) return;
