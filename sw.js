@@ -1,6 +1,6 @@
 /* Service worker do Financas Casal - GERADO por fonte/build-github.sh.
    Nao edite a mao: o proximo build sobrescreve. */
-const VERSAO_CACHE = '2026-08-30-17-37';
+const VERSAO_CACHE = '2026-08-30-17-54';
 /* Corpo do service worker. O build-github.sh cola o `const VERSAO_CACHE` acima
    disto e grava o resultado em ../sw.js - NAO registre este arquivo diretamente.
 
@@ -12,7 +12,9 @@ const VERSAO_CACHE = '2026-08-30-17-37';
    Limpar o cache aqui nunca apaga lancamento nenhum. */
 
 const CACHE = 'bela-angra-' + VERSAO_CACHE;
-const ARQUIVOS = ['./', './index.html'];
+/* Os icones entram no cache porque agora sao ARQUIVO, nao data URI dentro do
+   HTML. Sem isto o app abre offline sem o icone da barra de endereco. */
+const ARQUIVOS = ['./', './index.html', './icone-180.png', './icone-512.png'];
 
 /* ---- instalar: baixa o app e guarda ---- */
 self.addEventListener('install', function(ev){
