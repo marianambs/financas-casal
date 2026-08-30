@@ -525,7 +525,7 @@ tr:last-child td{border-bottom:none;}
 /* Versão do programa. NÃO editar à mão: o build.sh carimba a data e a hora
    aqui ao gerar o arquivo. É ela que nomeia o cache do service worker e faz o
    celular perceber que existe versão nova. */
-const VERSAO = '2026-08-30 18:42';
+const VERSAO = '2026-08-30 19:06';
 /* =========================================================
    FINANÇAS CASAL — offline, dados no localStorage
    Mayky e Mari. Ver CLAUDE.md para as regras de negócio.
@@ -1393,18 +1393,25 @@ function regravarParcelada(compraId, d){
   const c = cartao(d.cartaoId);
   if(!c) return 0;
 
-  /* guarda as atuais por número de parcela, antes de tirá-las da lista */
-  const antigas = {};
+  /* Parcela JÁ ADIANTADA é história fechada: o dinheiro saiu da conta, está no
+     saldo, e refazê-la desfaria um pagamento que aconteceu de verdade. Ela fica
+     congelada — nem sai da lista, nem é recriada. */
+  const antigas = {}, congelada = {};
   DB.lancamentos.forEach(function(l){
-    if(l.compraId === compraId) antigas[l.parcelaN] = l;
+    if(l.compraId !== compraId) return;
+    if(l.adiantadoDe) congelada[l.parcelaN] = true;
+    else              antigas[l.parcelaN] = l;
   });
-  DB.lancamentos = DB.lancamentos.filter(function(l){ return l.compraId !== compraId; });
+  DB.lancamentos = DB.lancamentos.filter(function(l){
+    return l.compraId !== compraId || l.adiantadoDe;
+  });
 
   const valores  = dividirParcelas(d.total, d.parcelas);
   const primeira = faturaDaCompra(d.data, c.diaFechamento, c.diaVencimento);
   const jaPagas  = Math.max(0, Math.min(d.jaPagas || 0, d.parcelas - 1));
 
   for(let i = jaPagas; i < d.parcelas; i++){
+    if(congelada[i+1]) continue;          /* já foi adiantada, não se mexe */
     const mesFatura = mesMais(primeira, i);
     const velha = antigas[i+1];
     DB.lancamentos.push(novoLancamento({
@@ -1447,6 +1454,26 @@ function excluirLancamento(id){
     });
     salvarDB(); desenhar();
     toast('Transferência excluída.');
+    return;
+  }
+
+  /* Apagar o pagamento sem desfazer a quitação deixaria as compras marcadas
+     como pagas e a dívida sumida da tela — dinheiro devido que não aparece. */
+  if(l.faturaCartaoId){
+    if(!confirm('Excluir o pagamento da fatura de ' + nomeMes(l.faturaMes) + '?\n\n'
+              + 'A fatura volta a contar o que ficar faltando.')) return;
+
+    const cid = l.faturaCartaoId, fm = l.faturaMes;
+    DB.lancamentos = DB.lancamentos.filter(function(x){ return x.id !== id; });
+
+    /* Pode haver outro pagamento parcial que ainda cubra tudo. */
+    if(pagoDaFatura(cid, fm) < faturaDoMes(cid, fm)){
+      DB.lancamentos.forEach(function(x){
+        if(x.alvo === 'cartao:' + cid && x.mesFatura === fm) x.pago = false;
+      });
+    }
+    salvarDB(); desenhar();
+    toast('Pagamento excluído.');
     return;
   }
 
@@ -1501,11 +1528,15 @@ function barraRapida(){
     +   '<button class="btn btn-1" onclick="gravarRapido()">Lançar</button>'
     + '</div>'
     + '<div id="rapidoPreview" style="margin-top:12px"></div>'
-    + (DB.contas.length > 1
-      ? '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--borda)">'
-        + '<button class="btn btn-2 btn-p" onclick="transferirEntreContas()">'
-        + '⇄ Transferir entre contas</button></div>'
-      : '')
+    + '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--borda);'
+    + 'display:flex;gap:8px;flex-wrap:wrap">'
+    +   '<button class="btn btn-2 btn-p" onclick="formLancamento()">'
+    +   '✎ Lançar em detalhe</button>'
+    +   (DB.contas.length > 1
+        ? '<button class="btn btn-2 btn-p" onclick="transferirEntreContas()">'
+          + '⇄ Transferir entre contas</button>'
+        : '')
+    + '</div>'
     + '</div>';
 }
 
@@ -1619,6 +1650,256 @@ function gravarRapido(){
 }
 
 /* ---------------------------------------------------------
+   LANÇAR EM DETALHE
+
+   A barra de frase é rápida para quem já sabe a frase. Ela não serve para
+   DECIDIR: escolher a categoria olhando a lista, dizer se foi no crédito ou no
+   débito, conferir a data antes de gravar. Este formulário é o caminho de quem
+   quer ver o que está fazendo — e o único jeito de corrigir depois.
+   --------------------------------------------------------- */
+
+/* Corrigir não pode oferecer parcelamento: mudar 1× para 6× num lançamento que
+   já existe é outra operação (a da tela de compras parceladas). */
+let lancEditando = false;
+
+/**
+ * Conta e cartão no MESMO campo, separados por grupo. É assim que "foi no
+ * crédito ou no débito?" vira uma escolha só, em vez de duas perguntas que
+ * podem se contradizer.
+ */
+function seletorAlvo(id, atual){
+  return '<select id="' + id + '" onchange="lancAlvoMudou()">'
+    + (DB.contas.length
+      ? '<optgroup label="Conta — débito, pix, dinheiro">'
+        + DB.contas.map(function(c){
+            return '<option value="conta:' + c.id + '"'
+              + (atual === 'conta:' + c.id ? ' selected' : '') + '>'
+              + esc(c.nome) + '</option>';
+          }).join('') + '</optgroup>'
+      : '')
+    + (DB.cartoes.length
+      ? '<optgroup label="Cartão — crédito">'
+        + DB.cartoes.map(function(c){
+            return '<option value="cartao:' + c.id + '"'
+              + (atual === 'cartao:' + c.id ? ' selected' : '') + '>'
+              + esc(c.nome) + '</option>';
+          }).join('') + '</optgroup>'
+      : '')
+    + '</select>';
+}
+
+/** Sem argumento, e um lancamento novo. Com um lancamento, corrige aquele. */
+function formLancamento(l){
+  if(!DB.contas.length && !DB.cartoes.length){
+    alert('Cadastre uma conta ou um cartão antes — é o que diz de onde o dinheiro sai.');
+    return;
+  }
+
+  lancEditando = !!l;
+  const tipo = l ? l.tipo : 'saida';
+  const alvo = l ? l.alvo
+             : (DB.contas.length ? 'conta:' + DB.contas[0].id
+                                 : 'cartao:' + DB.cartoes[0].id);
+
+  abrirModal(
+    '<h2>' + (l ? 'Corrigir lançamento' : 'Novo lançamento') + '</h2>'
+
+    + '<div class="campo"><label>É saída ou entrada</label>'
+    + '<select id="lcTipo" onchange="lancTipoMudou()">'
+    +   '<option value="saida"' + (tipo==='saida'?' selected':'') + '>Saída — gasto</option>'
+    +   '<option value="entrada"' + (tipo==='entrada'?' selected':'') + '>Entrada — recebimento</option>'
+    + '</select></div>'
+
+    + '<div class="grade g2" style="gap:12px">'
+    +   '<div class="campo"><label>Valor</label>'
+    +   '<input id="lcValor" inputmode="decimal" placeholder="0,00" value="'
+    +   (l ? fmtSimples(l.valor) : '') + '"></div>'
+    +   '<div class="campo"><label>Data</label>'
+    +   '<input id="lcData" type="date" onchange="lancAlvoMudou()" value="'
+    +   (l ? l.data : hojeISO()) + '"></div>'
+    + '</div>'
+
+    + '<div class="campo"><label>Descrição</label>'
+    + '<input id="lcDesc" placeholder="Mercado, gasolina, salário…" value="'
+    + (l ? esc(l.descricao) : '') + '"></div>'
+
+    + '<div class="campo"><label id="lcAlvoRot">Pagou com</label>'
+    + seletorAlvo('lcAlvo', alvo) + '</div>'
+
+    + '<div class="campo" id="lcParcelasBox" style="display:none">'
+    +   '<label>Em quantas vezes</label>'
+    +   '<input id="lcParcelas" type="number" min="1" max="60" value="1" '
+    +   'oninput="lancAlvoMudou()">'
+    +   '<p class="ajuda">1 é à vista. Acima disso o app cria uma parcela por '
+    +   'fatura, cada uma no mês dela.</p></div>'
+
+    + '<div class="campo"><label>Categoria</label><span id="lcCatBox"></span></div>'
+
+    + seletorDono('lcPessoa', l ? (l.pessoaId || '') : quemEstaUsando(), 'De quem')
+
+    + '<div class="campo" id="lcPagoBox"><label>Situação</label>'
+    + '<select id="lcPago">'
+    +   '<option value="1">Já saiu da conta</option>'
+    +   '<option value="0">Ainda vai acontecer — previsto</option>'
+    + '</select></div>'
+
+    + '<p class="ajuda" id="lcAviso" style="min-height:20px"></p>'
+
+    + '<div class="modal-acoes">'
+    + '<button class="btn btn-2" onclick="fecharModal()">Cancelar</button>'
+    + '<button class="btn btn-1" onclick="salvarLancamento('
+    + (l ? "'" + l.id + "'" : '') + ')">' + (l ? 'Salvar' : 'Lançar') + '</button></div>');
+
+  lancCategorias(l ? (l.categoriaId || '') : '');
+  const sit = document.getElementById('lcPago');
+  if(sit) sit.value = (l ? (l.pago ? '1' : '0') : '1');
+  lancAlvoMudou();
+}
+
+/* A lista de categorias muda com o tipo: categoria de gasto não serve para
+   recebimento, e misturar as duas é o começo do relatório errado. */
+function lancCategorias(atual){
+  const box = document.getElementById('lcCatBox');
+  if(!box) return;
+  const tipo = v('lcTipo') || 'saida';
+  box.innerHTML = '<select id="lcCat">'
+    + '<option value="">Sem categoria</option>'
+    + DB.categorias.filter(function(c){ return c.tipo === tipo; })
+        .map(function(c){
+          return '<option value="' + c.id + '"' + (c.id === atual ? ' selected' : '') + '>'
+            + c.icone + ' ' + esc(c.nome) + '</option>';
+        }).join('')
+    + '</select>';
+}
+
+function lancTipoMudou(){
+  lancCategorias(v('lcCat'));   /* mantém a escolha se ela existir no novo tipo */
+  lancAlvoMudou();
+}
+
+/* Ajusta a tela ao que foi escolhido. */
+function lancAlvoMudou(){
+  const alvo = v('lcAlvo');
+  const tipo = v('lcTipo') || 'saida';
+  const noCartao = alvoEhCartao(alvo);
+
+  const rot   = document.getElementById('lcAlvoRot');
+  const parc  = document.getElementById('lcParcelasBox');
+  const sit   = document.getElementById('lcPagoBox');
+  const aviso = document.getElementById('lcAviso');
+
+  if(rot) rot.textContent = (tipo === 'entrada') ? 'Entrou em' : 'Pagou com';
+
+  /* Parcelar só existe em compra NOVA no cartão. */
+  if(parc) parc.style.display = (noCartao && tipo === 'saida' && !lancEditando) ? '' : 'none';
+
+  /* No cartão a situação não é escolha: a compra vira "paga" quando a fatura é
+     paga. Deixar o campo aberto ali seria oferecer uma mentira. */
+  if(sit) sit.style.display = noCartao ? 'none' : '';
+
+  if(!aviso) return;
+  if(!noCartao){ aviso.textContent = ''; return; }
+
+  const ct = cartao(idDoAlvo(alvo));
+  if(!ct){ aviso.textContent = ''; return; }
+  const mes = faturaDaCompra(v('lcData') || hojeISO(), ct.diaFechamento, ct.diaVencimento);
+  const n = Math.max(1, Number(v('lcParcelas')) || 1);
+
+  aviso.innerHTML = 'Cai na <b>fatura de ' + nomeMes(mes) + '</b> — é nesse mês que '
+    + 'vai contar no orçamento.'
+    + (n > 1 && !lancEditando
+        ? ' A última parcela cai em <b>' + nomeMes(mesMais(mes, n - 1)) + '</b>.'
+        : ' Vira "pago" quando a fatura for paga.');
+}
+
+function salvarLancamento(id){
+  const tipo  = (v('lcTipo') === 'entrada') ? 'entrada' : 'saida';
+  const valor = lerDinheiro(v('lcValor'));
+  const desc  = (v('lcDesc') || '').trim();
+  const data  = v('lcData') || hojeISO();
+  const alvo  = v('lcAlvo');
+  const cat   = v('lcCat') || '';
+  const quem  = v('lcPessoa') || '';
+  const parcelas = Math.max(1, Number(v('lcParcelas')) || 1);
+
+  if(!valor || valor <= 0){ alert('Valor inválido.'); return; }
+  if(!desc){ alert('Descreva o lançamento.'); return; }
+  if(!alvo){ alert('Escolha a conta ou o cartão.'); return; }
+
+  const noCartao = alvoEhCartao(alvo);
+  const pago = noCartao ? false : (v('lcPago') !== '0');
+
+  /* ---- corrigir um que já existe ---- */
+  if(id){
+    const l = DB.lancamentos.filter(function(x){ return x.id === id; })[0];
+    if(!l){ alert('Lançamento não encontrado.'); return; }
+
+    const mesAntes = l.mesFatura;
+    l.tipo = tipo; l.valor = valor; l.descricao = desc; l.data = data;
+    l.alvo = alvo; l.categoriaId = cat; l.pessoaId = quem;
+
+    /* Zerar antes de recarimbar é obrigatório: carimbarCompetencia respeita o
+       mesFatura que já veio pronto (é o que protege as parcelas), então mudar
+       a data ou o cartão não teria efeito nenhum sem esta linha. */
+    l.mesFatura = '';
+    carimbarCompetencia(l);
+
+    /* Mudou de fatura estando marcada como paga? Volta a não paga — a fatura
+       nova não foi paga. Mesma regra da correção de compra parcelada. */
+    if(noCartao) l.pago = (mesAntes === l.mesFatura) ? l.pago : false;
+    else         l.pago = pago;
+
+    /* Trocar o alvo de volta para um cartão desfaz o adiantamento: a marca não
+       pode sobreviver, senão a linha continuaria dizendo "adiantada" sobre uma
+       parcela que voltou para a fatura. */
+    if(noCartao){ delete l.adiantadoDe; delete l.faturaOriginal; }
+
+    salvarDB(); fecharModal(); desenhar();
+    toast('Lançamento corrigido.');
+    return;
+  }
+
+  /* ---- novo, parcelado ---- */
+  if(noCartao && tipo === 'saida' && parcelas > 1){
+    gravarParcelado({
+      cartaoId: idDoAlvo(alvo), total: valor, parcelas: parcelas,
+      descricao: desc, data: data, categoriaId: cat, pessoaId: quem, jaPagas: 0
+    });
+    salvarDB(); fecharModal(); desenhar();
+    toast(parcelas + '× · ' + desc);
+    return;
+  }
+
+  /* ---- novo, à vista ---- */
+  DB.lancamentos.push(novoLancamento({
+    data: data, descricao: desc, valor: valor, tipo: tipo,
+    pessoaId: quem, categoriaId: cat, alvo: alvo, pago: pago
+  }));
+  salvarDB(); fecharModal(); desenhar();
+  toast(desc + ' · ' + fmt(valor));
+}
+
+/**
+ * O ✎ de cada linha. Cada tipo de lançamento tem o seu editor certo, e mandar
+ * todos para o formulário comum quebraria os que são feitos de vários
+ * registros amarrados.
+ */
+function editarLancamento(id){
+  const l = DB.lancamentos.filter(function(x){ return x.id === id; })[0];
+  if(!l) return;
+
+  if(l.compraId)        { editarParcelada(l.compraId); return; }
+  if(l.transferenciaId) { transferirEntreContas(l.transferenciaId); return; }
+  if(l.faturaCartaoId)  {
+    alert('Este é o pagamento de uma fatura.\n\n'
+        + 'Para mudar o valor, exclua este pagamento e lance de novo pelo '
+        + 'botão "Pagar fatura" — assim a fatura volta a contar certo.');
+    return;
+  }
+  formLancamento(l);
+}
+
+/* ---------------------------------------------------------
    TRANSFERIR ENTRE CONTAS
 
    Tirar do Itaú e pôr no Nubank não é gasto nem receita — é o mesmo dinheiro
@@ -1627,41 +1908,59 @@ function gravarRapido(){
    Sem isso, uma transferência de R$ 500 apareceria como R$ 500 de gasto e
    R$ 500 de receita, inventando movimento que não existiu.
    --------------------------------------------------------- */
-function transferirEntreContas(){
+/** Sem argumento, é uma transferência nova. Com o par, corrige aquela. */
+function transferirEntreContas(parId){
   if(DB.contas.length < 2){
     alert('Você precisa de pelo menos duas contas cadastradas.');
     return;
   }
 
-  const opcoes = function(exceto){
-    return DB.contas.filter(function(c){ return c.id !== exceto; })
-      .map(function(c){
-        return '<option value="' + c.id + '">' + esc(c.nome)
-             + ' · ' + fmt(saldoDaConta(c.id)) + '</option>';
-      }).join('');
-  };
+  /* Os dois lados da transferência que está sendo corrigida. */
+  const lados   = parId
+    ? DB.lancamentos.filter(function(l){ return l.transferenciaId === parId; })
+    : [];
+  const saida   = lados.filter(function(l){ return l.tipo === 'transf'; })[0];
+  const entrada = lados.filter(function(l){ return l.tipo === 'transf_entra'; })[0];
+  const corrigindo = !!(saida && entrada);
+
+  const deAtual   = corrigindo ? idDoAlvo(saida.alvo)   : '';
+  const paraAtual = corrigindo ? idDoAlvo(entrada.alvo) : '';
 
   abrirModal(
-    '<h2>Transferir entre contas</h2>'
+    '<h2>' + (corrigindo ? 'Corrigir transferência' : 'Transferir entre contas') + '</h2>'
     + '<div class="campo"><label>Sai de</label>'
-    + '<select id="trDe" onchange="trAtualizarPara()">' + opcoes('') + '</select></div>'
+    + '<select id="trDe" onchange="trAtualizarPara()">'
+    + DB.contas.map(function(c){
+        return '<option value="' + c.id + '"' + (c.id === deAtual ? ' selected' : '') + '>'
+             + esc(c.nome) + ' · ' + fmt(saldoDaConta(c.id)) + '</option>';
+      }).join('')
+    + '</select></div>'
     + '<div class="campo"><label>Entra em</label>'
     + '<select id="trPara"></select></div>'
     + '<div class="grade g2" style="gap:12px">'
     +   '<div class="campo"><label>Valor</label>'
-    +   '<input id="trValor" inputmode="decimal" placeholder="0,00"></div>'
+    +   '<input id="trValor" inputmode="decimal" placeholder="0,00" value="'
+    +   (corrigindo ? fmtSimples(saida.valor) : '') + '"></div>'
     +   '<div class="campo"><label>Data</label>'
-    +   '<input id="trData" type="date" value="' + hojeISO() + '"></div>'
+    +   '<input id="trData" type="date" value="'
+    +   (corrigindo ? saida.data : hojeISO()) + '"></div>'
     + '</div>'
     + '<div class="campo"><label>Observação <span class="fra">(opcional)</span></label>'
-    + '<input id="trNota" placeholder="Ex.: guardei para pagar a fatura"></div>'
+    + '<input id="trNota" placeholder="Ex.: guardei para pagar a fatura" value="'
+    + (corrigindo ? esc(saida.nota || '') : '') + '"></div>'
     + '<p class="ajuda">Isto <b>não</b> conta como gasto nem como receita do mês — é o '
     + 'mesmo dinheiro mudando de lugar. Só os saldos das duas contas mudam.</p>'
     + '<div class="modal-acoes">'
     + '<button class="btn btn-2" onclick="fecharModal()">Cancelar</button>'
-    + '<button class="btn btn-1" onclick="salvarTransferencia()">Transferir</button></div>');
+    + '<button class="btn btn-1" onclick="salvarTransferencia('
+    + (corrigindo ? "'" + parId + "'" : '') + ')">'
+    + (corrigindo ? 'Salvar' : 'Transferir') + '</button></div>');
 
   trAtualizarPara();
+  /* Depois de montar o "entra em": o valor guardado só pode ser escolhido
+     quando a opção já existe na lista. */
+  const para = document.getElementById('trPara');
+  if(corrigindo && para) para.value = paraAtual;
 }
 
 /* A conta de destino nunca pode ser a mesma da origem. */
@@ -1677,7 +1976,7 @@ function trAtualizarPara(){
     }).join('');
 }
 
-function salvarTransferencia(){
+function salvarTransferencia(parId){
   const de = v('trDe'), para = v('trPara');
   const valor = lerDinheiro(v('trValor'));
   const data = v('trData') || hojeISO();
@@ -1687,6 +1986,32 @@ function salvarTransferencia(){
   if(de === para){ alert('Escolha duas contas diferentes.'); return; }
 
   const cDe = conta(de), cPara = conta(para);
+  if(!cDe || !cPara){ alert('Conta não encontrada.'); return; }
+
+  /* ---- corrigir uma que já existe ---- */
+  if(parId){
+    const lados = DB.lancamentos.filter(function(l){ return l.transferenciaId === parId; });
+    const saida   = lados.filter(function(l){ return l.tipo === 'transf'; })[0];
+    const entrada = lados.filter(function(l){ return l.tipo === 'transf_entra'; })[0];
+    if(!saida || !entrada){ alert('Transferência não encontrada.'); return; }
+
+    /* Os dois lados são corrigidos NO LUGAR, mantendo os ids: para a
+       sincronização isto é "os dois mudaram", e não "sumiram dois e nasceram
+       dois". Mesma razão da correção de compra parcelada. */
+    saida.alvo = 'conta:' + de;   saida.descricao   = 'Para ' + cPara.nome;
+    entrada.alvo = 'conta:' + para; entrada.descricao = 'De ' + cDe.nome;
+    [saida, entrada].forEach(function(l){
+      l.valor = valor; l.data = data; l.nota = nota;
+      l.mesFatura = '';
+      carimbarCompetencia(l);
+    });
+
+    salvarDB(); fecharModal(); desenhar();
+    toast('Transferência corrigida.');
+    return;
+  }
+
+  /* ---- nova ---- */
   const saldo = saldoDaConta(de);
   if(valor > saldo){
     if(!confirm('A conta ' + cDe.nome + ' tem ' + fmt(saldo) + ' e você está tirando '
@@ -1774,7 +2099,8 @@ function desenharLancamentos(){
           + '</div></div>';
       }).join('')
     : '<div class="card vazio">Nenhum lançamento em ' + nomeMes(mesVisivel) + '.<br>'
-      + '<span class="p">Use a barra lá em cima.</span></div>');
+      + '<span class="p">Escreva na barra lá em cima, ou use '
+      + '<b>Lançar em detalhe</b> para escolher campo a campo.</span></div>');
 }
 
 function filtroDePessoa(){
@@ -1811,6 +2137,7 @@ function linhaLancamento(l){
     +   '<p class="pp fra">'
     +   esc(transf ? 'Transferência' : (cat ? cat.nome : 'Sem categoria'))
     +   (l.alvo ? ' · ' + esc(nomeAlvo(l.alvo)) : '')
+    +   (l.adiantadoDe ? ' · adiantada da fatura de ' + nomeMes(l.faturaOriginal) : '')
     +   (p ? ' · ' + p.emoji + ' ' + esc(p.nome) : '')
     +   '</p>'
     + '</div>'
@@ -1818,6 +2145,8 @@ function linhaLancamento(l){
     + '<span class="tab" style="font-weight:650;color:' + corValor + ';white-space:nowrap">'
     +   sinal + $(l.valor) + '</span>'
     + '<div style="display:flex;gap:2px;flex:none">'
+    +   '<button class="btn btn-2 btn-p" style="border:none;padding:0 8px" '
+    +   'onclick="editarLancamento(\'' + l.id + '\')" title="Corrigir">✎</button>'
     +   '<button class="btn btn-2 btn-p" style="border:none;padding:0 8px" '
     +   'onclick="alternarPago(\'' + l.id + '\')" title="' + (l.pago?'Marcar como previsto':'Marcar como pago') + '">'
     +   (l.pago ? '↺' : '✓') + '</button>'
@@ -1878,13 +2207,54 @@ function faturaDoMes(cartaoId, ym){
     .filter(function(l){ return l.alvo === 'cartao:' + cartaoId && l.mesFatura === ym; })
     .reduce(function(s,l){ return s + (l.tipo==='entrada' ? -l.valor : l.valor); }, 0);
 }
+/* Quanto já foi pago POR CIMA de uma fatura específica.
+
+   Pagamento parcial existe: dá para pagar R$ 400 de uma fatura de R$ 1.000 e
+   deixar o resto. Enquanto a fatura não fecha por inteiro, as compras dela
+   continuam marcadas como NÃO pagas — marcar algumas seria escolher quais no
+   chute. Quem sabe o quanto foi abatido são estes registros de pagamento. */
+function pagoDaFatura(cartaoId, ym){
+  return DB.lancamentos
+    .filter(function(l){ return l.faturaCartaoId === cartaoId && l.faturaMes === ym; })
+    .reduce(function(s,l){ return s + l.valor; }, 0);
+}
+
+/* O que ainda falta pagar de uma fatura. Zero quando já foi quitada. */
+function faltaDaFatura(cartaoId, ym){
+  const emAberto = DB.lancamentos
+    .filter(function(l){
+      return l.alvo === 'cartao:' + cartaoId && l.mesFatura === ym && !l.pago;
+    })
+    .reduce(function(s,l){ return s + (l.tipo==='entrada' ? -l.valor : l.valor); }, 0);
+  return Math.max(0, emAberto - pagoDaFatura(cartaoId, ym));
+}
+
+/* Meses de fatura com algo em aberto, do mais antigo para o mais novo.
+   Os vencidos entram: pagar em setembro a fatura de agosto é o normal. */
+function faturasEmAberto(cartaoId){
+  const meses = {};
+  DB.lancamentos.forEach(function(l){
+    if(l.alvo === 'cartao:' + cartaoId && l.mesFatura && !l.pago) meses[l.mesFatura] = true;
+  });
+  return Object.keys(meses)
+    .filter(function(ym){ return faltaDaFatura(cartaoId, ym) > 0; })
+    .sort();
+}
+
 /* Tudo que ainda vai virar fatura: a dívida real do cartão. */
 function dividaDoCartao(cartaoId, aPartirDe){
-  return DB.lancamentos
-    .filter(function(l){
-      return l.alvo === 'cartao:' + cartaoId && l.mesFatura >= aPartirDe && !l.pago;
-    })
-    .reduce(function(s,l){ return s + l.valor; }, 0);
+  /* Mês a mês, e não tudo somado de uma vez. Com pagamento parcial, o que foi
+     abatido vale só para a fatura que foi paga — somando tudo junto, um
+     adiantamento de agosto abateria dívida de dezembro. */
+  const meses = {};
+  DB.lancamentos.forEach(function(l){
+    if(l.alvo === 'cartao:' + cartaoId && l.mesFatura >= aPartirDe && !l.pago){
+      meses[l.mesFatura] = true;
+    }
+  });
+  return Object.keys(meses).reduce(function(s, ym){
+    return s + faltaDaFatura(cartaoId, ym);
+  }, 0);
 }
 
 /* O resumo de um mês. `ym` é o mês de COMPETÊNCIA, não o da data. */
@@ -2378,7 +2748,8 @@ function cartaoFatura(ct){
     .filter(function(l){ return l.alvo === 'cartao:' + ct.id && l.mesFatura === mesVisivel; })
     .sort(function(a,b){ return (a.data||'').localeCompare(b.data||''); });
 
-  const abertos = itens.filter(function(l){ return !l.pago; }).length;
+  const falta  = faltaDaFatura(ct.id, mesVisivel);
+  const abatido = pagoDaFatura(ct.id, mesVisivel);
 
   return '<div class="card">'
   + '<div class="lin" style="align-items:flex-start;flex-wrap:wrap;gap:14px">'
@@ -2391,7 +2762,10 @@ function cartaoFatura(ct){
   +   '</div>'
   +   '<div style="text-align:right">'
   +     '<p class="n-m tab">' + $(total) + '</p>'
-  +     (abertos
+  +     (abatido > 0 && falta > 0
+        ? '<p class="pp fra tab">pago ' + $(abatido) + ' · falta ' + $(falta) + '</p>'
+        : '')
+  +     (falta > 0
         ? '<button class="btn btn-2 btn-p" style="margin-top:8px" '
           + 'onclick="pagarFatura(\'' + ct.id + '\')">Pagar fatura</button>'
         : (itens.length ? '<span class="chip chip-pos" style="margin-top:8px">fatura paga</span>' : ''))
@@ -2424,7 +2798,12 @@ function cartaoFatura(ct){
             +   (cat ? ' · ' + esc(cat.nome) : '')
             +   (p ? ' · ' + p.emoji + ' ' + esc(p.nome) : '') + '</p>'
             + '</div>'
-            + '<span class="tab" style="font-weight:650">' + $(l.valor) + '</span></div>';
+            + '<span class="tab" style="font-weight:650">' + $(l.valor) + '</span>'
+            + (l.pago ? ''
+              : '<button class="btn btn-2 btn-p" style="border:none;padding:0 8px;flex:none" '
+                + 'onclick="adiantarLancamento(\'' + l.id + '\')" '
+                + 'title="Adiantar o pagamento">⏩</button>')
+            + '</div>';
         }).join('')
       + '</div>'
     : '<p class="ajuda" style="margin-top:18px;text-align:center">Nenhuma compra nesta fatura.</p>')
@@ -2432,61 +2811,228 @@ function cartaoFatura(ct){
 }
 
 /**
- * Pagar a fatura: marca as compras como quitadas e tira o valor de uma conta.
- * A saída é um TRANSFER, não uma despesa — as compras já foram contadas quando
- * aconteceram, e contar de novo dobraria o mês (regra 6 do CLAUDE.md).
+ * PAGAR A FATURA — inteira ou em parte, de qualquer mês em aberto.
+ *
+ * O pagamento é uma TRANSFERÊNCIA, não uma despesa: as compras já foram
+ * contadas quando aconteceram, e contar de novo dobraria o mês (regra 6).
+ *
+ * O mês vem escolhido num campo porque a fatura que se paga quase nunca é a do
+ * mês em que se está: em setembro paga-se a de agosto. E o valor é editável
+ * porque pagar uma parte e deixar o resto é comum — e não tinha como registrar.
  */
-function pagarFatura(cartaoId){
+function pagarFatura(cartaoId, mesEscolhido){
   const ct = cartao(cartaoId);
-  const total = faturaDoMes(cartaoId, mesVisivel);
-
+  if(!ct) return;
   if(!DB.contas.length){
     alert('Cadastre uma conta antes — é dela que o dinheiro sai.');
     return;
   }
-  if(total <= 0){ toast('Esta fatura está zerada.'); return; }
+
+  const meses = faturasEmAberto(cartaoId);
+  if(!meses.length){ toast('Não há fatura em aberto neste cartão.'); return; }
+
+  /* Abre no mês que está na tela quando ele tem fatura aberta. Senão, na mais
+     ANTIGA em aberto — que é a vencida, a que costuma estar pegando fogo. */
+  const mes = (mesEscolhido && meses.indexOf(mesEscolhido) >= 0) ? mesEscolhido
+            : (meses.indexOf(mesVisivel) >= 0 ? mesVisivel : meses[0]);
+
+  const total   = faturaDoMes(cartaoId, mes);
+  const abatido = pagoDaFatura(cartaoId, mes);
+  const falta   = faltaDaFatura(cartaoId, mes);
 
   abrirModal(
-    '<h2>Pagar a fatura do ' + esc(ct.nome) + '</h2>'
-    + '<p>Vai marcar as compras de <b>' + nomeMes(mesVisivel) + '</b> como pagas e tirar '
-    + '<b class="tab">' + fmt(total) + '</b> da conta escolhida.</p>'
-    + '<div class="campo" style="margin-top:16px"><label>Tirar de</label><select id="fatConta">'
+    '<h2>Pagar fatura do ' + esc(ct.nome) + '</h2>'
+
+    + '<div class="campo"><label>Qual fatura</label>'
+    /* Trocar o mês reabre o modal já com os números daquele mês. Reabrir é
+       mais simples e mais seguro do que remendar meia dúzia de campos. */
+    + '<select id="fatMes" onchange="pagarFatura(\'' + cartaoId + '\', this.value)">'
+    + meses.map(function(ym){
+        return '<option value="' + ym + '"' + (ym === mes ? ' selected' : '') + '>'
+          + nomeMes(ym) + ' · falta ' + fmt(faltaDaFatura(cartaoId, ym))
+          + (ym < mesAtual() ? ' — vencida' : '') + '</option>';
+      }).join('')
+    + '</select></div>'
+
+    + '<p class="ajuda">Fatura de <b>' + nomeMes(mes) + '</b>: ' + fmt(total)
+    + (abatido > 0 ? ' · já pago <b>' + fmt(abatido) + '</b>' : '')
+    + ' · falta <b class="tab">' + fmt(falta) + '</b>'
+    + (mes < mesAtual() ? ' · <b>venceu em ' + fmtData(vencimentoDaFatura(mes, ct.diaVencimento))
+                          + '</b>' : '')
+    + '</p>'
+
+    + '<div class="grade g2" style="gap:12px;margin-top:14px">'
+    +   '<div class="campo"><label>Quanto vai pagar</label>'
+    +   '<input id="fatValor" inputmode="decimal" oninput="pagamentoResumo(\'' + cartaoId
+    +   '\',\'' + mes + '\')" value="' + fmtSimples(falta) + '"></div>'
+    +   '<div class="campo"><label>Quando saiu</label>'
+    +   '<input id="fatData" type="date" value="' + hojeISO() + '"></div>'
+    + '</div>'
+
+    + '<div class="campo"><label>Tirar de</label><select id="fatConta">'
     + DB.contas.map(function(c){
         return '<option value="' + c.id + '">' + esc(c.nome) + ' · '
              + fmt(saldoDaConta(c.id)) + '</option>';
       }).join('') + '</select></div>'
-    + '<p class="ajuda">Isso <b>não</b> conta como gasto novo do mês: as compras já foram '
-    + 'contadas quando aconteceram. Só o saldo da conta muda.</p>'
+
+    + '<p class="ajuda" id="fatResumo" style="min-height:34px"></p>'
+
     + '<div class="modal-acoes">'
     + '<button class="btn btn-2" onclick="fecharModal()">Cancelar</button>'
-    + '<button class="btn btn-1" onclick="confirmarPagamento(\'' + cartaoId + '\')">Confirmar</button>'
+    + '<button class="btn btn-1" onclick="confirmarPagamento(\'' + cartaoId + '\',\''
+    + mes + '\')">Confirmar</button>'
     + '</div>');
+
+  pagamentoResumo(cartaoId, mes);
 }
 
-function confirmarPagamento(cartaoId){
+/* O que vai acontecer, escrito antes de confirmar. */
+function pagamentoResumo(cartaoId, mes){
+  const el = document.getElementById('fatResumo');
+  if(!el) return;
+  const falta = faltaDaFatura(cartaoId, mes);
+  const valor = lerDinheiro(v('fatValor')) || 0;
+
+  if(valor <= 0){ el.textContent = ''; return; }
+
+  if(valor >= falta){
+    el.innerHTML = 'Quita a fatura de ' + nomeMes(mes) + '.'
+      + (valor > falta ? ' <b>Você está pagando ' + fmt(valor - falta)
+                       + ' a mais do que falta.</b>' : '')
+      + '<br>Isto <b>não</b> conta como gasto novo: as compras já foram contadas '
+      + 'quando aconteceram. Só o saldo da conta muda.';
+  } else {
+    el.innerHTML = 'Abate ' + fmt(valor) + ' · ainda vão faltar <b class="tab">'
+      + fmt(falta - valor) + '</b> nesta fatura.'
+      + '<br>As compras continuam contando como não pagas até a fatura fechar.';
+  }
+}
+
+function confirmarPagamento(cartaoId, mes){
   const ct = cartao(cartaoId);
   const contaId = v('fatConta');
-  let total = 0;
+  const valor = lerDinheiro(v('fatValor'));
+  const data  = v('fatData') || hojeISO();
+  const falta = faltaDaFatura(cartaoId, mes);
 
-  DB.lancamentos.forEach(function(l){
-    if(l.alvo === 'cartao:' + cartaoId && l.mesFatura === mesVisivel && !l.pago){
-      l.pago = true;
-      total += (l.tipo === 'entrada' ? -l.valor : l.valor);
-    }
-  });
+  if(!valor || valor <= 0){ alert('Valor inválido.'); return; }
+  if(!contaId){ alert('Escolha a conta de onde o dinheiro sai.'); return; }
+  if(valor > falta){
+    if(!confirm('Faltam ' + fmt(falta) + ' nesta fatura e você está pagando '
+              + fmt(valor) + '.\n\nContinuar assim mesmo?')) return;
+  }
 
-  if(total > 0){
-    DB.lancamentos.push(novoLancamento({
-      data: vencimentoDaFatura(mesVisivel, ct.diaVencimento),
-      descricao: 'Fatura ' + ct.nome,
-      valor: total, tipo: 'transf',
-      pessoaId: ct.donoId || '', alvo: 'conta:' + contaId, pago: true,
-      nota: 'Pagamento da fatura de ' + mesVisivel
-    }));
+  /* Os dois campos abaixo são o que liga o pagamento à fatura. É por eles que
+     pagoDaFatura() sabe o quanto já foi abatido — sem eles, pagamento parcial
+     viraria só um dinheiro que sumiu da conta. */
+  DB.lancamentos.push(novoLancamento({
+    data: data,
+    descricao: 'Fatura ' + ct.nome + ' · ' + nomeMesCurto(mes),
+    valor: valor, tipo: 'transf',
+    pessoaId: ct.donoId || '', alvo: 'conta:' + contaId, pago: true,
+    faturaCartaoId: cartaoId, faturaMes: mes,
+    nota: 'Pagamento da fatura de ' + mes
+  }));
+
+  /* Quitou: as compras daquela fatura viram "pago" e param de contar como
+     dívida. Pagamento PARCIAL não marca nenhuma — marcar algumas seria
+     escolher quais no chute, e a soma continuaria certa por acaso, não por
+     construção. O abatimento vive no registro do pagamento. */
+  const quitou = valor >= falta;
+  if(quitou){
+    DB.lancamentos.forEach(function(l){
+      if(l.alvo === 'cartao:' + cartaoId && l.mesFatura === mes) l.pago = true;
+    });
   }
 
   salvarDB(); fecharModal(); desenhar();
-  toast('Fatura paga. ' + fmt(total) + ' saiu de ' + conta(contaId).nome + '.');
+  toast(quitou
+    ? 'Fatura de ' + nomeMes(mes) + ' quitada · ' + fmt(valor) + ' saiu de ' + conta(contaId).nome + '.'
+    : fmt(valor) + ' abatido · faltam ' + fmt(falta - valor) + ' em ' + nomeMes(mes) + '.');
+}
+
+/* ---------------------------------------------------------
+   ADIANTAR — pagar antes da fatura
+
+   Serve para parcela futura e para compra à vista que ainda vai cair na
+   fatura. O dinheiro sai da CONTA agora, e aquilo deixa de existir na fatura
+   em que cairia.
+
+   Por isso o lançamento troca de alvo: de "cartao:X" para "conta:Y". Não é um
+   detalhe de implementação — é o que faz TODAS as telas ficarem certas de uma
+   vez, sem nenhuma exceção espalhada:
+
+     - o saldo da conta cai, porque saldoDaConta soma o que tem alvo de conta;
+     - a fatura futura encolhe, porque faturaDoMes só olha alvo de cartão;
+     - a dívida do cartão encolhe junto;
+     - e o gasto passa a contar no MÊS EM QUE O DINHEIRO SAIU, que é a regra 3.
+
+   O caminho de volta fica guardado em adiantadoDe e faturaOriginal.
+   --------------------------------------------------------- */
+function adiantarLancamento(id){
+  const l = DB.lancamentos.filter(function(x){ return x.id === id; })[0];
+  if(!l) return;
+  if(!alvoEhCartao(l.alvo)){ toast('Isto não está numa fatura.'); return; }
+  if(l.pago){ toast('Esta já está paga.'); return; }
+  if(!DB.contas.length){
+    alert('Cadastre uma conta antes — é dela que o dinheiro sai.');
+    return;
+  }
+
+  const ct = cartao(idDoAlvo(l.alvo));
+
+  abrirModal(
+    '<h2>Adiantar pagamento</h2>'
+    + '<p class="ajuda">' + esc(l.descricao) + ' · <b class="tab">' + fmt(l.valor) + '</b>'
+    + (ct ? '<br>Hoje está na fatura de <b>' + nomeMes(l.mesFatura) + '</b> do '
+          + esc(ct.nome) + '.' : '')
+    + '</p>'
+
+    + '<div class="grade g2" style="gap:12px;margin-top:14px">'
+    +   '<div class="campo"><label>Sai de</label><select id="adConta">'
+    +   DB.contas.map(function(c){
+          return '<option value="' + c.id + '">' + esc(c.nome) + ' · '
+               + fmt(saldoDaConta(c.id)) + '</option>';
+        }).join('') + '</select></div>'
+    +   '<div class="campo"><label>Quando saiu</label>'
+    +   '<input id="adData" type="date" value="' + hojeISO() + '"></div>'
+    + '</div>'
+
+    + '<p class="ajuda">Sai do saldo da conta agora e <b>some da fatura de '
+    + nomeMes(l.mesFatura) + '</b>. O gasto passa a contar no mês em que o '
+    + 'dinheiro saiu, não mais no da fatura.</p>'
+
+    + '<div class="modal-acoes">'
+    + '<button class="btn btn-2" onclick="fecharModal()">Cancelar</button>'
+    + '<button class="btn btn-1" onclick="confirmarAdiantamento(\'' + id + '\')">'
+    + 'Adiantar</button></div>');
+}
+
+function confirmarAdiantamento(id){
+  const l = DB.lancamentos.filter(function(x){ return x.id === id; })[0];
+  if(!l) return;
+  const contaId = v('adConta');
+  const data = v('adData') || hojeISO();
+  if(!contaId){ alert('Escolha a conta.'); return; }
+
+  const saldo = saldoDaConta(contaId);
+  if(l.valor > saldo){
+    if(!confirm('A conta tem ' + fmt(saldo) + ' e o adiantamento é de ' + fmt(l.valor)
+              + '.\n\nO saldo vai ficar negativo. Continuar?')) return;
+  }
+
+  l.adiantadoDe    = l.alvo;        /* de qual cartão saiu */
+  l.faturaOriginal = l.mesFatura;   /* em que fatura ela cairia */
+  l.alvo = 'conta:' + contaId;
+  l.data = data;
+  l.pago = true;
+  l.mesFatura = '';
+  /* alvo virou conta, então a competência passa a ser o mês da data — que é
+     justamente o mês em que o dinheiro saiu. */
+  carimbarCompetencia(l);
+
+  salvarDB(); fecharModal(); desenhar();
+  toast('Adiantado · ' + fmt(l.valor) + ' saiu de ' + conta(contaId).nome + '.');
 }
 
 /* ---------------------------------------------------------
@@ -2550,6 +3096,15 @@ function formParcelada(compra){
      pensa a compra ("12x de 250"), e é o que ela quer conferir. */
   const parcela = corrigindo ? Math.round(compra.total / compra.parcelas) : 0;
 
+  /* Quantas a data explicaria sozinha, e quantas a compra realmente tem.
+     Quando os dois números diferem, houve adiantamento — e o campo manual
+     precisa nascer aberto, senão a correção apagaria o adiantamento. */
+  const pelaData = corrigindo
+    ? parceladaVencidas(cartao(compra.cartaoId), compra.dataCompra, compra.parcelas)
+    : 0;
+  const pagasIniciais = corrigindo ? (compra.jaPagas || 0) : 0;
+  const manual = corrigindo && pagasIniciais !== pelaData;
+
   abrirModal(
     '<h2>' + (corrigindo ? 'Corrigir compra parcelada'
                          : 'Compra parcelada já em andamento') + '</h2>'
@@ -2586,21 +3141,30 @@ function formParcelada(compra){
     +   (corrigindo ? compra.parcelas : 10) + '"></div>'
     + '</div>'
 
-    /* A data é o caminho curto: com ela o app conta sozinho o que já venceu.
-       O número continua editável para quem prefere ir direto, ou para quem
-       atrasou uma parcela e sabe que a conta pela data não bate. */
+    /* A DATA é o caminho normal. Contar parcela na mão é trabalho que o app
+       consegue fazer, e errar por um desconta ou sobra um mês inteiro. */
     + '<div class="campo"><label>Data da compra</label>'
     + '<input id="ppData" type="date" onchange="parceladaDataMudou()" value="'
     + (corrigindo ? (compra.dataCompra || '') : '') + '">'
-    + '<p class="ajuda">Preenchendo aqui, o app calcula sozinho quantas parcelas '
-    + 'já venceram.</p></div>'
+    + '<p class="ajuda" id="ppPagasAjuda">Pela data, o app conta sozinho quantas '
+    + 'parcelas já venceram.</p></div>'
 
-    + '<div class="campo"><label>Quantas já foram pagas</label>'
-    + '<input id="ppPagas" type="number" min="0" max="59" '
-    + 'oninput="parceladaResumo()" value="'
-    + (corrigindo ? (compra.jaPagas || 0) : 0) + '">'
-    + '<p class="ajuda" id="ppPagasAjuda">Se já pagou 4 de 10, o app cria só as '
-    + '6 que faltam.</p></div>'
+    /* O número só aparece para quem ADIANTOU parcela — é o único caso em que a
+       conta pela data não tem como acertar, porque adiantamento não segue
+       calendário nenhum. Fora disso, o campo só serviria para errar. */
+    + '<div class="campo">'
+    +   '<label style="display:flex;align-items:center;gap:9px;color:var(--txt)">'
+    +   '<input type="checkbox" id="ppAdiantei" onchange="parceladaAdianteiMudou()" '
+    +   'style="width:auto;min-height:0;flex:none"' + (manual ? ' checked' : '') + '>'
+    +   'Paguei alguma parcela adiantada</label>'
+    +   '<div id="ppPagasBox" style="margin-top:10px;display:'
+    +   (manual ? '' : 'none') + '">'
+    +     '<label>Quantas já foram pagas</label>'
+    +     '<input id="ppPagas" type="number" min="0" max="59" '
+    +     'oninput="parceladaResumo()" value="' + pagasIniciais + '">'
+    +     '<p class="ajuda">Conte as que venceram <b>e</b> as que você adiantou.</p>'
+    +   '</div>'
+    + '</div>'
 
     + '<div class="campo"><label>Categoria</label><select id="ppCat" '
     + 'onchange="parceladaResumo()">'
@@ -2643,35 +3207,57 @@ function parceladaDeQuem(compra){
   return uma ? (uma.pessoaId || '') : quemEstaUsando();
 }
 
-/* A data (ou o cartão, ou o total) mudou: refaz a conta de quantas venceram.
-   Só mexe no campo das pagas a partir DESTES campos — digitar direto no campo
-   das pagas não pode ser desfeito por um recálculo. */
+/**
+ * Quantas parcelas já venceram, contando só pelo calendário.
+ *
+ * Venceu o que caiu em fatura de mês ANTERIOR ao de hoje. A deste mês ainda
+ * está correndo, então a parcela dela é a próxima a pagar, não uma paga.
+ */
+function parceladaVencidas(ct, data, total){
+  if(!ct || !data) return 0;
+  const primeira = faturaDaCompra(data, ct.diaFechamento, ct.diaVencimento);
+  let n = Math.max(0, mesesEntre(primeira, mesAtual()));
+  if(total >= 2) n = Math.min(n, total - 1);
+  return n;
+}
+
+/* A data, o cartão ou o total mudaram: refaz a conta.
+   Não encosta no número quando a pessoa marcou que adiantou — ali o valor é
+   dela, e um recálculo apagaria justamente a informação que o app não tem. */
 function parceladaDataMudou(){
   const data  = v('ppData');
   const ct    = cartao(v('ppCartao'));
   const ajuda = document.getElementById('ppPagasAjuda');
   const campo = document.getElementById('ppPagas');
+  const cx    = document.getElementById('ppAdiantei');
+  const manual = !!(cx && cx.checked);
 
-  if(data && ct && campo){
-    const n = Number(v('ppTotal')) || 0;
-    const primeira = faturaDaCompra(data, ct.diaFechamento, ct.diaVencimento);
-    /* Venceu tudo o que caiu em fatura de mês ANTERIOR ao de hoje. A fatura
-       deste mês ainda está correndo, então a parcela dela é a próxima. */
-    let venceram = Math.max(0, mesesEntre(primeira, mesAtual()));
-    if(n >= 2) venceram = Math.min(venceram, n - 1);
-    campo.value = venceram;
+  const venceram = parceladaVencidas(ct, data, Number(v('ppTotal')) || 0);
 
-    if(ajuda){
+  if(campo && !manual) campo.value = venceram;
+
+  if(ajuda){
+    if(!data){
+      ajuda.textContent = 'Preencha a data e o app conta sozinho quantas já venceram.';
+    } else if(manual){
+      ajuda.textContent = 'Pela data seriam ' + venceram
+        + ', mas você marcou que adiantou — vale o número que estiver abaixo.';
+    } else {
       ajuda.textContent = venceram === 0
-        ? 'Pela data, nenhuma parcela venceu ainda — o app cria todas.'
-        : 'Pela data, ' + venceram + (venceram === 1 ? ' parcela já venceu.'
-                                                     : ' parcelas já venceram.')
-          + ' Corrija à mão se alguma ficou atrasada.';
+        ? 'Nenhuma parcela venceu ainda — o app cria todas.'
+        : venceram + (venceram === 1 ? ' parcela já venceu' : ' parcelas já venceram')
+          + ' — o app cria só as que faltam.';
     }
-  } else if(ajuda){
-    ajuda.textContent = 'Se já pagou 4 de 10, o app cria só as 6 que faltam.';
   }
   parceladaResumo();
+}
+
+/* Marcar "adiantei" abre o número. Desmarcar devolve a conta ao app. */
+function parceladaAdianteiMudou(){
+  const cx  = document.getElementById('ppAdiantei');
+  const box = document.getElementById('ppPagasBox');
+  if(box) box.style.display = (cx && cx.checked) ? '' : 'none';
+  parceladaDataMudou();
 }
 
 /* O que vai acontecer, escrito antes de salvar. */
