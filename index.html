@@ -93,7 +93,20 @@ body{
 .navbtn .ico{width:20px;height:20px;flex-shrink:0;opacity:.8;}
 .navbtn.ativo .ico{opacity:1;}
 .navbtn .rot{min-width:0;overflow:hidden;text-overflow:ellipsis;}
-#sidebar .pe{padding:12px 16px;border-top:1px solid var(--borda);font-size:12px;color:var(--fra);}
+#sidebar .pe{padding:12px;border-top:1px solid var(--borda);font-size:12px;color:var(--fra);}
+/* Quem está lançando agora. É botão, não rótulo: no celular do casal um pega o
+   aparelho do outro o tempo todo, e trocar precisa ser um toque. */
+#quemSou{
+  display:flex;align-items:center;gap:9px;width:100%;
+  min-height:var(--tap);padding:0 12px;
+  background:var(--sup2);border:1px solid var(--borda);border-radius:12px;
+  font:600 14px inherit;font-family:inherit;color:var(--txt);cursor:pointer;
+  text-align:left;-webkit-tap-highlight-color:transparent;
+}
+#quemSou:hover{border-color:var(--ac);}
+#quemSou .rot{font-size:10px;font-weight:400;color:var(--fra);display:block;line-height:1;}
+#quemSou .seta{margin-left:auto;color:var(--fra);font-size:11px;}
+#versaoApp{margin-top:8px;padding-left:2px;}
 
 #main{flex:1;min-width:0;display:flex;flex-direction:column;}
 #topbar{
@@ -403,8 +416,8 @@ tr:last-child td{border-bottom:none;}
     </div>
     <nav id="navMenu"></nav>
     <div class="pe">
-      <span id="quemSou"></span>
-      <br><span id="versaoApp"></span>
+      <button id="quemSou" onclick="trocarPessoa()"></button>
+      <div id="versaoApp"></div>
     </div>
   </div>
 
@@ -433,7 +446,7 @@ tr:last-child td{border-bottom:none;}
 /* Versão do programa. NÃO editar à mão: o build.sh carimba a data e a hora
    aqui ao gerar o arquivo. É ela que nomeia o cache do service worker e faz o
    celular perceber que existe versão nova. */
-const VERSAO = '2026-08-30 17:18';
+const VERSAO = '2026-08-30 17:30';
 /* =========================================================
    FINANÇAS CASAL — offline, dados no localStorage
    Mayky e Mari. Ver CLAUDE.md para as regras de negócio.
@@ -1276,6 +1289,20 @@ function excluirLancamento(id){
   const l = DB.lancamentos.filter(function(x){ return x.id === id; })[0];
   if(!l) return;
 
+  if(l.transferenciaId){
+    const outra = DB.lancamentos.filter(function(x){
+      return x.transferenciaId === l.transferenciaId && x.id !== l.id;
+    })[0];
+    if(!confirm('Excluir esta transferência?\n\n'
+              + 'Os dois lados somem juntos — o que saiu e o que entrou.')) return;
+    DB.lancamentos = DB.lancamentos.filter(function(x){
+      return x.transferenciaId !== l.transferenciaId;
+    });
+    salvarDB(); desenhar();
+    toast('Transferência excluída.');
+    return;
+  }
+
   if(l.compraId){
     const compra = DB.compras.filter(function(c){ return c.id === l.compraId; })[0];
     const quantas = DB.lancamentos.filter(function(x){ return x.compraId === l.compraId; }).length;
@@ -1327,6 +1354,11 @@ function barraRapida(){
     +   '<button class="btn btn-1" onclick="gravarRapido()">Lançar</button>'
     + '</div>'
     + '<div id="rapidoPreview" style="margin-top:12px"></div>'
+    + (DB.contas.length > 1
+      ? '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--borda)">'
+        + '<button class="btn btn-2 btn-p" onclick="transferirEntreContas()">'
+        + '⇄ Transferir entre contas</button></div>'
+      : '')
     + '</div>';
 }
 
@@ -1437,6 +1469,100 @@ function gravarRapido(){
     if(novo) novo.focus();
   }, 30);
   toast(r.descricao + ' · ' + fmt(r.valor));
+}
+
+/* ---------------------------------------------------------
+   TRANSFERIR ENTRE CONTAS
+
+   Tirar do Itaú e pôr no Nubank não é gasto nem receita — é o mesmo dinheiro
+   mudando de lugar. Por isso vira um PAR de lançamentos do tipo transferência,
+   que mexem nos dois saldos mas ficam de fora do "entrou" e do "saiu" do mês.
+   Sem isso, uma transferência de R$ 500 apareceria como R$ 500 de gasto e
+   R$ 500 de receita, inventando movimento que não existiu.
+   --------------------------------------------------------- */
+function transferirEntreContas(){
+  if(DB.contas.length < 2){
+    alert('Você precisa de pelo menos duas contas cadastradas.');
+    return;
+  }
+
+  const opcoes = function(exceto){
+    return DB.contas.filter(function(c){ return c.id !== exceto; })
+      .map(function(c){
+        return '<option value="' + c.id + '">' + esc(c.nome)
+             + ' · ' + fmt(saldoDaConta(c.id)) + '</option>';
+      }).join('');
+  };
+
+  abrirModal(
+    '<h2>Transferir entre contas</h2>'
+    + '<div class="campo"><label>Sai de</label>'
+    + '<select id="trDe" onchange="trAtualizarPara()">' + opcoes('') + '</select></div>'
+    + '<div class="campo"><label>Entra em</label>'
+    + '<select id="trPara"></select></div>'
+    + '<div class="grade g2" style="gap:12px">'
+    +   '<div class="campo"><label>Valor</label>'
+    +   '<input id="trValor" inputmode="decimal" placeholder="0,00"></div>'
+    +   '<div class="campo"><label>Data</label>'
+    +   '<input id="trData" type="date" value="' + hojeISO() + '"></div>'
+    + '</div>'
+    + '<div class="campo"><label>Observação <span class="fra">(opcional)</span></label>'
+    + '<input id="trNota" placeholder="Ex.: guardei para pagar a fatura"></div>'
+    + '<p class="ajuda">Isto <b>não</b> conta como gasto nem como receita do mês — é o '
+    + 'mesmo dinheiro mudando de lugar. Só os saldos das duas contas mudam.</p>'
+    + '<div class="modal-acoes">'
+    + '<button class="btn btn-2" onclick="fecharModal()">Cancelar</button>'
+    + '<button class="btn btn-1" onclick="salvarTransferencia()">Transferir</button></div>');
+
+  trAtualizarPara();
+}
+
+/* A conta de destino nunca pode ser a mesma da origem. */
+function trAtualizarPara(){
+  const de = v('trDe');
+  const para = document.getElementById('trPara');
+  if(!para) return;
+  const anterior = para.value;
+  para.innerHTML = DB.contas.filter(function(c){ return c.id !== de; })
+    .map(function(c){
+      return '<option value="' + c.id + '"' + (c.id === anterior ? ' selected' : '') + '>'
+           + esc(c.nome) + ' · ' + fmt(saldoDaConta(c.id)) + '</option>';
+    }).join('');
+}
+
+function salvarTransferencia(){
+  const de = v('trDe'), para = v('trPara');
+  const valor = lerDinheiro(v('trValor'));
+  const data = v('trData') || hojeISO();
+  const nota = (v('trNota') || '').trim();
+
+  if(!valor || valor <= 0){ alert('Valor inválido.'); return; }
+  if(de === para){ alert('Escolha duas contas diferentes.'); return; }
+
+  const cDe = conta(de), cPara = conta(para);
+  const saldo = saldoDaConta(de);
+  if(valor > saldo){
+    if(!confirm('A conta ' + cDe.nome + ' tem ' + fmt(saldo) + ' e você está tirando '
+              + fmt(valor) + '.\n\nO saldo dela vai ficar negativo. Continuar?')) return;
+  }
+
+  /* O par carrega o mesmo transferenciaId: é o que permite apagar os dois
+     juntos. Apagar só um lado deixaria dinheiro aparecendo ou sumindo do nada. */
+  const par = uid();
+
+  DB.lancamentos.push(novoLancamento({
+    data: data, descricao: 'Para ' + cPara.nome, valor: valor, tipo: 'transf',
+    pessoaId: quemEstaUsando() || '', alvo: 'conta:' + de, pago: true,
+    transferenciaId: par, nota: nota
+  }));
+  DB.lancamentos.push(novoLancamento({
+    data: data, descricao: 'De ' + cDe.nome, valor: valor, tipo: 'transf_entra',
+    pessoaId: quemEstaUsando() || '', alvo: 'conta:' + para, pago: true,
+    transferenciaId: par, nota: nota
+  }));
+
+  salvarDB(); fecharModal(); desenhar();
+  toast(fmt(valor) + ' de ' + cDe.nome + ' para ' + cPara.nome + '.');
 }
 
 /* ---------------------------------------------------------
@@ -2902,7 +3028,7 @@ function editarConta(id){
     + '<div class="campo"><label>Saldo de hoje</label>'
     + '<input id="cSaldo" inputmode="decimal" value="' + (id ? fmtSimples(ct.saldoInicial) : '')
     + '" placeholder="0,00"></div>'
-    + seletorDono('cDono', ct.donoId)
+    + seletorDono('cDono', ct.donoId, 'Titular', 'Conjunta')
     + '<div class="campo"><label>Cor</label>' + escolhedor('cCor', CORES, ct.cor, 'cor') + '</div>'
     + acoesModal('salvarConta(\'' + (id||'') + '\')'));
 }
@@ -2980,7 +3106,7 @@ function editarCartao(id){
     + '<div class="campo"><label>Limite <span class="fra">(opcional)</span></label>'
     + '<input id="kLimite" inputmode="decimal" value="' + (ct.limite ? fmtSimples(ct.limite) : '')
     + '" placeholder="0,00"></div>'
-    + seletorDono('kDono', ct.donoId, 'Titular')
+    + seletorDono('kDono', ct.donoId, 'Titular', 'Conjunto')
     + '<div class="campo"><label>Cor</label>' + escolhedor('kCor', CORES, ct.cor, 'cor') + '</div>'
     + acoesModal('salvarCartao(\'' + (id||'') + '\')'));
 }
@@ -3438,10 +3564,13 @@ function corIgual(rgb, hex){
 }
 function escolhido(id){ const e = document.getElementById(id); return e ? e.value : ''; }
 
-function seletorDono(id, atual, rotulo){
+/* `vazio` é como chamar a opção "sem dono". Muda com o que se cadastra:
+   conta e cartão sempre têm titular, então lá o certo é "Conjunta"; já um gasto
+   de luz é da casa mesmo, sem dono. */
+function seletorDono(id, atual, rotulo, vazio){
   if(!temVariasPessoas()) return '';
   return '<div class="campo"><label>' + (rotulo || 'De quem é') + '</label>'
-    + '<select id="' + id + '"><option value="">Da casa</option>'
+    + '<select id="' + id + '"><option value="">' + (vazio || 'Da casa') + '</option>'
     + DB.pessoas.map(function(p){
         return '<option value="' + p.id + '"' + (atual===p.id?' selected':'') + '>'
              + esc(p.nome) + '</option>';
@@ -3994,6 +4123,15 @@ function alternarEsconder(){
    --------------------------------------------------------- */
 function iniciarApp(){
   fecharTelaCheia();
+  /* Sem PIN o app não passa pela tela de entrar, e quem abriu pela primeira vez
+     não descobre sozinho que dá para trocar de pessoa. */
+  if(temVariasPessoas() && !DB.pessoas.some(function(p){ return p.pinHash; })
+     && !aparelho().viuTrocaPessoa){
+    mudarAparelho('viuTrocaPessoa', true);
+    setTimeout(function(){
+      toast('Toque no seu nome, no menu, para trocar quem está lançando.');
+    }, 900);
+  }
   /* Sem pessoa ativa (ninguém criou PIN ainda) o app assume a primeira: é o uso
      de quem não quis tranca. */
   if(!pessoaAtiva && DB.pessoas.length) pessoaAtiva = aparelho().pessoaPadrao || DB.pessoas[0].id;
@@ -4004,9 +4142,78 @@ function iniciarApp(){
 function atualizarRodape(){
   const el = document.getElementById('quemSou');
   const p = pessoa(pessoaAtiva);
-  if(el) el.textContent = p ? (p.emoji + ' ' + p.nome) : '';
+  if(el){
+    el.innerHTML = p
+      ? '<span class="av" style="width:26px;height:26px;font-size:14px;background:'
+        + p.cor + '26">' + p.emoji + '</span>'
+        + '<span style="min-width:0"><span class="rot">lançando como</span>'
+        + '<span style="display:block;margin-top:2px">' + esc(p.nome) + '</span></span>'
+        + '<span class="seta">▾</span>'
+      : '<span style="min-width:0">Escolher quem está usando</span><span class="seta">▾</span>';
+  }
   const vs = document.getElementById('versaoApp');
   if(vs) vs.textContent = 'versão ' + VERSAO;
+}
+
+/* ---------------------------------------------------------
+   TROCAR DE PESSOA SEM SAIR
+
+   Não pede o PIN de propósito. O PIN tranca o APARELHO; quem já está dentro
+   passou por ele. Pedir de novo só para mudar a etiqueta do lançamento seria
+   encheção sem ganho de segurança — e no uso real um pega o celular do outro
+   várias vezes por semana.
+   --------------------------------------------------------- */
+function trocarPessoa(){
+  if(!DB.pessoas.length){ irPara('ajustes'); return; }
+
+  abrirModal(
+    '<h2>Quem está lançando?</h2>'
+    + '<p class="ajuda" style="margin-bottom:16px">O próximo lançamento vai ficar '
+    + 'com o nome de quem você escolher aqui.</p>'
+    + '<div style="display:flex;gap:10px;flex-wrap:wrap">'
+    + DB.pessoas.map(function(p){
+        const on = p.id === pessoaAtiva;
+        return '<button onclick="assumirPessoa(\'' + p.id + '\')" '
+          + 'style="flex:1 1 130px;background:' + (on ? p.cor + '22' : 'var(--sup2)') + ';'
+          + 'border:2px solid ' + (on ? p.cor : 'transparent') + ';border-radius:16px;'
+          + 'padding:16px 12px;cursor:pointer;font-family:inherit;'
+          + '-webkit-tap-highlight-color:transparent">'
+          + '<div style="font-size:28px;line-height:1">' + p.emoji + '</div>'
+          + '<div style="font-weight:650;margin-top:6px;color:'
+          + (on ? p.cor : 'var(--txt)') + '">' + esc(p.nome) + '</div>'
+          + (on ? '<div class="pp" style="color:' + p.cor + ';margin-top:2px">agora</div>' : '')
+          + '</button>';
+      }).join('')
+    + '</div>'
+    + '<div class="modal-acoes" style="justify-content:space-between">'
+    + '<button class="btn btn-2" onclick="fecharModal(); irPara(\'ajustes\')">'
+    + 'Gerenciar pessoas</button>'
+    + '<span>'
+    + (DB.pessoas.some(function(p){ return p.pinHash; })
+      ? '<button class="btn btn-2" onclick="bloquearApp()">Bloquear</button> '
+      : '')
+    + '<button class="btn btn-1" onclick="fecharModal()">Fechar</button></span>'
+    + '</div>');
+}
+
+function assumirPessoa(id){
+  if(!pessoa(id)) return;
+  pessoaAtiva = id;
+  mudarAparelho('pessoaPadrao', id);
+  fecharModal();
+  atualizarRodape();
+  desenhar();
+  toast('Lançando como ' + pessoa(id).nome + '.');
+}
+
+/* Volta para a tela de entrar. Só faz sentido quando existe PIN — sem PIN não
+   haveria como voltar a entrar. */
+function bloquearApp(){
+  fecharModal();
+  pessoaAtiva = null;
+  destravadoEm = 0;
+  pessoaEscolhida = null;
+  telaEntrar();
 }
 
 function abrirApp(){
