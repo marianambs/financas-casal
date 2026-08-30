@@ -525,7 +525,7 @@ tr:last-child td{border-bottom:none;}
 /* Versão do programa. NÃO editar à mão: o build.sh carimba a data e a hora
    aqui ao gerar o arquivo. É ela que nomeia o cache do service worker e faz o
    celular perceber que existe versão nova. */
-const VERSAO = '2026-08-30 19:06';
+const VERSAO = '2026-08-30 19:24';
 /* =========================================================
    FINANÇAS CASAL — offline, dados no localStorage
    Mayky e Mari. Ver CLAUDE.md para as regras de negócio.
@@ -1101,207 +1101,11 @@ function importarBackup(evt){
 }
 /* =========================================================
    LANÇAR
-   O atrito de lançar é o que mata planilha: se exige navegar até um formulário,
-   a pessoa deixa acumular e para de usar. Aqui uma frase vira um lançamento.
+   Um lançamento é feito no formulário "Lançar em detalhe": tipo, valor, data,
+   onde pagou, categoria, de quem. Ver a escolha na tela vale mais do que a
+   pressa de digitar uma frase — sobretudo porque errar a categoria ou o cartão
+   estraga o orçamento do mês inteiro, e em silêncio.
    ========================================================= */
-
-/* ---------------------------------------------------------
-   INTERPRETADOR DE FRASE
-
-   "mercado 250,90 nubank 3x"  -> saída, R$ 250,90, cartão Nubank, 3 parcelas
-   "uber 32 ontem"             -> saída, R$ 32,00, Transporte, data de ontem
-   "almoço 45 mari"            -> atribuído à Mari
-   "+salário 4200"             -> entrada
-   "aluguel 1800 dia 05"       -> no dia 5 deste mês (o 05 não vira valor)
-
-   Trabalha por TOKENS: cada etapa consome as palavras que reconheceu, e o que
-   sobra no fim é a descrição — remontada com o acento e a maiúscula originais.
-   --------------------------------------------------------- */
-
-const DICAS_ENTRADA = ['salario','recebi','receita','freela','freelance','rendimento',
-                       'dividendo','reembolso','vendi','venda','bonus','ferias','estagio'];
-
-/* Palavra -> nome da categoria. Só entra em ação quando a categoria não foi
-   dita pelo nome. A lista é curta de propósito: chute demais irrita mais do que
-   ajuda, porque a pessoa tem que conferir tudo. */
-const DICAS_CATEGORIA = [
-  [['mercado','supermercado','atacadao','feira'], 'Mercado'],
-  [['hortifruti','verdura','fruta','sacolao'], 'Hortifruti'],
-  [['padaria','pao'], 'Padaria'],
-  [['ifood','lanche','almoco','janta','jantar','pizza','hamburguer','cafe','bar','sorvete','acai','delivery','restaurante'], 'Lanches'],
-  [['uber','taxi','onibus','metro','gasolina','combustivel','estacionamento','pedagio','oficina','moto','carro'], 'Transporte'],
-  [['aluguel','condominio','iptu','internet','wifi','agua','gas','faxina'], 'Moradia'],
-  [['luz','energia','cemig','enel','light'], 'Conta de luz'],
-  [['farmacia','remedio','medico','dentista','exame','consulta','psicologo','vet','veterinario'], 'Saúde'],
-  [['racao','areia','gato','gatos','petshop'], 'Comida dos gatos'],
-  [['academia','crossfit','personal'], 'Academia'],
-  [['netflix','spotify','disney','prime','hbo','assinatura'], 'Assinaturas'],
-  [['cinema','show','viagem','praia','cerveja','festa','jogo','steam'], 'Lazer'],
-  [['roupa','sapato','tenis','shopping','presente','amazon','shopee'], 'Compras'],
-  [['celular','recarga','vivo','claro','tim'], 'Plano do celular'],
-  [['salario'], 'Salário'],
-  [['estagio'], 'Estágio']
-];
-
-const DIAS_PALAVRA = {hoje:0, ontem:-1, anteontem:-2, amanha:1};
-
-/* Remove acento e baixa a caixa: "Alimentação" -> "alimentacao". */
-function semAcento(txt){
-  return String(txt||'')
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase();
-}
-
-/* Acha o nome de uma conta/cartão/categoria/pessoa nos tokens livres.
-   Testa janelas de várias palavras, porque nome tem espaço ("conta corrente"),
-   e prefere sempre a correspondência MAIS LONGA. */
-function consumirNome(itens, tokens, campoNome){
-  campoNome = campoNome || 'nome';
-  let melhor = null;
-
-  itens.forEach(function(item){
-    const alvo = semAcento(item[campoNome]);
-    if(alvo.length < 2) return;
-    const partes = alvo.split(/\s+/).filter(Boolean);
-
-    for(let i=0; i + partes.length <= tokens.length; i++){
-      let bate = true;
-      for(let k=0; k<partes.length; k++){
-        const t = tokens[i+k];
-        if(t.usado || t.norm !== partes[k]){ bate = false; break; }
-      }
-      if(bate && (!melhor || partes.length > melhor.n)){
-        melhor = {item: item, i: i, n: partes.length};
-      }
-    }
-  });
-
-  if(!melhor) return null;
-  for(let k=0;k<melhor.n;k++) tokens[melhor.i+k].usado = true;
-  return melhor.item;
-}
-
-function interpretar(texto, hoje){
-  hoje = hoje || hojeISO();
-  const cru = String(texto||'').trim();
-  const forcaEntrada = cru.charAt(0) === '+';
-
-  const tokens = (forcaEntrada ? cru.slice(1) : cru)
-    .split(/\s+/).filter(Boolean)
-    .map(function(p){ return {bruto:p, norm:semAcento(p), usado:false}; });
-
-  const livres = function(){ return tokens.filter(function(t){ return !t.usado; }); };
-
-  const r = {
-    descricao:'', valor:null, tipo:'saida', data:hoje,
-    alvo:'', categoriaId:'', pessoaId: quemEstaUsando() || '',
-    parcelas:1,
-    achou:{valor:false, alvo:'', categoria:'', pessoa:'', data:'', parcelas:false}
-  };
-
-  /* 1. PARCELAS antes do valor — senão o "3" de "3x" vira dinheiro. */
-  livres().some(function(t){
-    const m = t.norm.match(/^(\d{1,2})x$/);
-    if(!m) return false;
-    const n = Number(m[1]);
-    if(n < 1 || n > 60) return false;
-    r.parcelas = n;
-    r.achou.parcelas = n > 1;
-    t.usado = true;
-    const i = tokens.indexOf(t);
-    if(i > 0 && tokens[i-1].norm === 'em') tokens[i-1].usado = true;  // "em 3x"
-    return true;
-  });
-
-  /* 2. DATA */
-  livres().some(function(t){
-    const d = DIAS_PALAVRA[t.norm];
-    if(d !== undefined){
-      r.data = somarDias(hoje, d);
-      r.achou.data = t.bruto;
-      t.usado = true;
-      return true;
-    }
-    /* 12/03 ou 12/03/2026 */
-    const b = t.norm.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/);
-    if(b){
-      let ano = b[3] ? Number(b[3]) : Number(hoje.slice(0,4));
-      if(ano < 100) ano += 2000;
-      const dia = Number(b[1]), mes = Number(b[2]);
-      if(dia>=1 && dia<=31 && mes>=1 && mes<=12){
-        r.data = ano + '-' + String(mes).padStart(2,'0') + '-' + String(dia).padStart(2,'0');
-        r.achou.data = t.bruto;
-        t.usado = true;
-        return true;
-      }
-    }
-    /* "dia 05" -> dia 5 do mês corrente */
-    if(t.norm === 'dia'){
-      const i = tokens.indexOf(t);
-      const prox = tokens[i+1];
-      const dia = prox && !prox.usado ? Number(prox.norm) : NaN;
-      if(dia>=1 && dia<=31){
-        r.data = diaDoMes(hoje.slice(0,7), dia);
-        r.achou.data = 'dia ' + dia;
-        t.usado = true; prox.usado = true;
-        return true;
-      }
-    }
-    return false;
-  });
-
-  /* 3. PESSOA antes de conta e cartão: nome de gente costuma ser uma palavra só
-     e some fácil dentro da descrição. */
-  const p = consumirNome(DB.pessoas, tokens);
-  if(p){ r.pessoaId = p.id; r.achou.pessoa = p.nome; }
-
-  /* 4. DESTINO — cartão antes de conta: dito "nubank", quase sempre é o cartão */
-  const cart = consumirNome(DB.cartoes, tokens);
-  if(cart){ r.alvo = 'cartao:' + cart.id; r.achou.alvo = cart.nome; }
-  else {
-    const cta = consumirNome(DB.contas, tokens);
-    if(cta){ r.alvo = 'conta:' + cta.id; r.achou.alvo = cta.nome; }
-  }
-
-  /* 5. ENTRADA OU SAÍDA */
-  r.tipo = (forcaEntrada || livres().some(function(t){
-    return DICAS_ENTRADA.indexOf(t.norm) >= 0;
-  })) ? 'entrada' : 'saida';
-
-  /* 6. VALOR — o último número que sobrou */
-  const nums = livres().filter(function(t){ return /^\d+([.,]\d+)*$/.test(t.norm); });
-  if(nums.length){
-    const t = nums[nums.length-1];
-    const c = lerDinheiro(t.norm);
-    if(c !== null && c > 0){ r.valor = c; r.achou.valor = true; t.usado = true; }
-  }
-
-  /* 7. CATEGORIA — nome explícito primeiro, palavra-chave depois */
-  const cats = DB.categorias.filter(function(c){ return c.tipo === r.tipo; });
-  const catNome = consumirNome(cats, tokens);
-  if(catNome){ r.categoriaId = catNome.id; r.achou.categoria = catNome.nome; }
-  else {
-    const palavras = {};
-    livres().forEach(function(t){ palavras[t.norm] = true; });
-    for(let i=0;i<DICAS_CATEGORIA.length && !r.categoriaId;i++){
-      const chaves = DICAS_CATEGORIA[i][0], nome = DICAS_CATEGORIA[i][1];
-      for(let k=0;k<chaves.length;k++){
-        if(!palavras[chaves[k]]) continue;
-        const achada = cats.filter(function(c){
-          return semAcento(c.nome) === semAcento(nome);
-        })[0];
-        if(achada){ r.categoriaId = achada.id; r.achou.categoria = achada.nome; break; }
-      }
-    }
-  }
-
-  /* 8. DESCRIÇÃO — o que sobrou, na grafia original */
-  const resto = livres().map(function(t){ return t.bruto; }).join(' ').trim();
-  r.descricao = resto || r.achou.categoria || (forcaEntrada ? 'Recebimento' : 'Lançamento');
-
-  return r;
-}
 
 /* ---------------------------------------------------------
    GRAVAR
@@ -1393,17 +1197,20 @@ function regravarParcelada(compraId, d){
   const c = cartao(d.cartaoId);
   if(!c) return 0;
 
-  /* Parcela JÁ ADIANTADA é história fechada: o dinheiro saiu da conta, está no
-     saldo, e refazê-la desfaria um pagamento que aconteceu de verdade. Ela fica
-     congelada — nem sai da lista, nem é recriada. */
+  /* Parcela JÁ PAGA — pela fatura ou adiantada — é história fechada: o dinheiro
+     saiu de verdade. Refazê-la desfaria um pagamento que aconteceu, e reduzir o
+     total de parcelas a apagaria junto com o registro do que já foi gasto.
+     Ela fica congelada: nem sai da lista, nem é recriada. */
+  function congelar(l){ return !!(l.adiantadoDe || l.pago); }
+
   const antigas = {}, congelada = {};
   DB.lancamentos.forEach(function(l){
     if(l.compraId !== compraId) return;
-    if(l.adiantadoDe) congelada[l.parcelaN] = true;
-    else              antigas[l.parcelaN] = l;
+    if(congelar(l)) congelada[l.parcelaN] = true;
+    else            antigas[l.parcelaN] = l;
   });
   DB.lancamentos = DB.lancamentos.filter(function(l){
-    return l.compraId !== compraId || l.adiantadoDe;
+    return l.compraId !== compraId || congelar(l);
   });
 
   const valores  = dividirParcelas(d.total, d.parcelas);
@@ -1411,7 +1218,7 @@ function regravarParcelada(compraId, d){
   const jaPagas  = Math.max(0, Math.min(d.jaPagas || 0, d.parcelas - 1));
 
   for(let i = jaPagas; i < d.parcelas; i++){
-    if(congelada[i+1]) continue;          /* já foi adiantada, não se mexe */
+    if(congelada[i+1]) continue;          /* já foi paga, não se mexe */
     const mesFatura = mesMais(primeira, i);
     const velha = antigas[i+1];
     DB.lancamentos.push(novoLancamento({
@@ -1503,10 +1310,8 @@ function alternarPago(id){
 }
 
 /* ---------------------------------------------------------
-   A BARRA DE LANÇAMENTO RÁPIDO
-   Fica no topo do Painel e dos Lançamentos. O preview embaixo mostra o que o
-   app entendeu ANTES de gravar — assim não existe o medo de "será que foi para
-   a categoria certa?".
+   OS BOTÕES DO TOPO
+   Ficam no Painel e nos Lançamentos.
    --------------------------------------------------------- */
 function barraRapida(){
   const semDestino = !DB.contas.length && !DB.cartoes.length;
@@ -1521,132 +1326,17 @@ function barraRapida(){
   }
 
   return '<div class="card">'
-    + '<div style="display:flex;gap:10px">'
-    +   '<input id="rapido" placeholder="Lance numa frase — ex.: mercado 250,90 nubank 3x" '
-    +   'autocomplete="off" autocapitalize="none" spellcheck="false" '
-    +   'oninput="previewRapido()" onkeydown="if(event.key===\'Enter\') gravarRapido()">'
-    +   '<button class="btn btn-1" onclick="gravarRapido()">Lançar</button>'
-    + '</div>'
-    + '<div id="rapidoPreview" style="margin-top:12px"></div>'
-    + '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--borda);'
-    + 'display:flex;gap:8px;flex-wrap:wrap">'
-    +   '<button class="btn btn-2 btn-p" onclick="formLancamento()">'
-    +   '✎ Lançar em detalhe</button>'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap">'
+    +   '<button class="btn btn-1" onclick="formLancamento()">+ Lançar</button>'
     +   (DB.contas.length > 1
-        ? '<button class="btn btn-2 btn-p" onclick="transferirEntreContas()">'
+        ? '<button class="btn btn-2" onclick="transferirEntreContas()">'
           + '⇄ Transferir entre contas</button>'
         : '')
-    + '</div>'
-    + '</div>';
-}
-
-/* Redesenhar a tela inteira a cada tecla destruiria o campo em que se está
-   digitando, e o foco iria junto. Por isso só o preview é reescrito. */
-function previewRapido(){
-  const campo = document.getElementById('rapido');
-  const alvo  = document.getElementById('rapidoPreview');
-  if(!campo || !alvo) return;
-
-  const txt = campo.value.trim();
-  if(!txt){
-    alvo.innerHTML = '<div style="display:flex;gap:6px;flex-wrap:wrap">'
-      + ['mercado 250,90', 'uber 32 ontem', 'fone 899 nubank 6x', '+salário 4200']
-        .map(function(ex){
-          return '<button class="chip" style="border:none;cursor:pointer;font-family:inherit" '
-               + 'onclick="usarExemplo(\'' + ex.replace(/'/g,"\\'") + '\')">' + esc(ex) + '</button>';
-        }).join('')
-      + '</div>';
-    return;
-  }
-
-  const r = interpretar(txt);
-  const eu = pessoa(r.pessoaId);
-  const chips = [];
-
-  chips.push('<span class="chip ' + (r.tipo==='entrada'?'chip-pos':'chip-neg') + '">'
-           + (r.tipo==='entrada'?'Entrada':'Saída') + '</span>');
-  chips.push('<span class="chip tab"' + (r.valor===null?' style="opacity:.55"':'') + '>'
-           + (r.valor===null ? 'falta o valor' : fmt(r.valor)) + '</span>');
-  if(r.descricao) chips.push('<span class="chip">' + esc(r.descricao) + '</span>');
-  if(eu) chips.push('<span class="chip' + (r.achou.pessoa?' chip-ac':'') + '">'
-                  + eu.emoji + ' ' + esc(eu.nome) + '</span>');
-  if(r.achou.alvo) chips.push('<span class="chip chip-ac">' + esc(r.achou.alvo) + '</span>');
-  if(r.achou.categoria) chips.push('<span class="chip">' + esc(r.achou.categoria) + '</span>');
-  if(r.parcelas > 1){
-    chips.push('<span class="chip chip-ala">' + r.parcelas + '× de '
-             + fmt(Math.floor((r.valor||0)/r.parcelas)) + '</span>');
-  }
-  chips.push('<span class="chip">' + fmtDiaMes(r.data) + '</span>');
-
-  /* Mostrar a competência quando ela for diferente do mês da data evita a
-     pergunta "por que esse gasto não apareceu neste mês?" (regra 3). */
-  let extra = '';
-  if(r.alvo && alvoEhCartao(r.alvo)){
-    const l = carimbarCompetencia({data:r.data, alvo:r.alvo});
-    if(l.mesComp !== mesDe(r.data)){
-      extra = '<p class="ajuda">Cai na fatura de <b>' + nomeMes(l.mesComp)
-            + '</b> — é nesse mês que vai contar.</p>';
-    }
-  }
-
-  alvo.innerHTML = '<div style="display:flex;gap:6px;flex-wrap:wrap">'
-                 + chips.join('') + '</div>' + extra;
-}
-
-function usarExemplo(txt){
-  const c = document.getElementById('rapido');
-  if(!c) return;
-  c.value = txt;
-  c.focus();
-  previewRapido();
-}
-
-function gravarRapido(){
-  const campo = document.getElementById('rapido');
-  if(!campo) return;
-  const txt = campo.value.trim();
-  if(!txt) return;
-
-  const r = interpretar(txt);
-  if(r.valor === null){
-    toast('Não achei o valor. Exemplo: mercado 150 nubank');
-    return;
-  }
-
-  /* Sem destino dito, cai na primeira conta — ou no primeiro cartão, se só
-     houver cartão cadastrado. */
-  let alvo = r.alvo;
-  if(!alvo){
-    if(DB.contas.length) alvo = 'conta:' + DB.contas[0].id;
-    else if(DB.cartoes.length) alvo = 'cartao:' + DB.cartoes[0].id;
-    else { toast('Cadastre uma conta antes de lançar.'); return; }
-  }
-
-  if(alvoEhCartao(alvo) && r.parcelas > 1){
-    gravarParcelado({
-      cartaoId: idDoAlvo(alvo), total: r.valor, parcelas: r.parcelas,
-      descricao: r.descricao, data: r.data,
-      categoriaId: r.categoriaId, pessoaId: r.pessoaId, jaPagas: 0
-    });
-  } else {
-    DB.lancamentos.push(novoLancamento({
-      data: r.data, descricao: r.descricao, valor: r.valor, tipo: r.tipo,
-      pessoaId: r.pessoaId, categoriaId: r.categoriaId, alvo: alvo,
-      /* Compra no cartão só vira "pago" quando a fatura é quitada. */
-      pago: !alvoEhCartao(alvo)
-    }));
-  }
-
-  salvarDB();
-  campo.value = '';
-  desenhar();
-  /* Devolve o foco: lançar três gastos seguidos não deve exigir tocar no campo
-     de novo. Depois do desenhar(), o campo é outro elemento. */
-  setTimeout(function(){
-    const novo = document.getElementById('rapido');
-    if(novo) novo.focus();
-  }, 30);
-  toast(r.descricao + ' · ' + fmt(r.valor));
+    +   (DB.cartoes.length
+        ? '<button class="btn btn-2" onclick="irPara(\'cartoes\')">'
+          + '▤ Faturas e parcelas</button>'
+        : '')
+    + '</div></div>';
 }
 
 /* ---------------------------------------------------------
@@ -3101,18 +2791,31 @@ function formParcelada(compra){
      precisa nascer aberto, senão a correção apagaria o adiantamento. */
   const pelaData = corrigindo
     ? parceladaVencidas(cartao(compra.cartaoId), compra.dataCompra, compra.parcelas)
+    : 0;   /* sem data ainda não há o que contar; parceladaDataMudou() refaz */
+  const pagasIniciais = corrigindo ? (compra.jaPagas || 0) : pelaData;
+  /* O que sobra além do que o calendário explica foi adiantamento. */
+  const adiantadasIniciais = Math.max(0, pagasIniciais - pelaData);
+  const manual = adiantadasIniciais > 0;
+
+  /* Parcela já paga ou adiantada não é refeita na correção. */
+  const congeladas = corrigindo
+    ? DB.lancamentos.filter(function(l){
+        return l.compraId === compra.id && (l.pago || l.adiantadoDe);
+      }).length
     : 0;
-  const pagasIniciais = corrigindo ? (compra.jaPagas || 0) : 0;
-  const manual = corrigindo && pagasIniciais !== pelaData;
 
   abrirModal(
     '<h2>' + (corrigindo ? 'Corrigir compra parcelada'
                          : 'Compra parcelada já em andamento') + '</h2>'
     + '<p class="ajuda" style="margin-bottom:16px">'
     + (corrigindo
-        ? 'As parcelas que continuarem existindo mantêm o histórico. As que '
-        + 'mudarem de mês voltam a contar como não pagas, porque a fatura nova '
-        + 'ainda não venceu.'
+        ? 'As parcelas que continuarem existindo mantêm o histórico.'
+        + (congeladas > 0
+            ? ' <b>' + congeladas + (congeladas === 1
+                ? ' parcela já paga não vai ser mexida'
+                : ' parcelas já pagas não vão ser mexidas')
+              + '</b> — aquele dinheiro já saiu.'
+            : '')
         : 'Para compras feitas antes de vocês começarem a usar o app. As parcelas '
         + 'que faltam entram na projeção e no orçamento dos meses certos; as já '
         + 'pagas não entram em lugar nenhum.')
@@ -3159,11 +2862,18 @@ function formParcelada(compra){
     +   'Paguei alguma parcela adiantada</label>'
     +   '<div id="ppPagasBox" style="margin-top:10px;display:'
     +   (manual ? '' : 'none') + '">'
-    +     '<label>Quantas já foram pagas</label>'
-    +     '<input id="ppPagas" type="number" min="0" max="59" '
-    +     'oninput="parceladaResumo()" value="' + pagasIniciais + '">'
-    +     '<p class="ajuda">Conte as que venceram <b>e</b> as que você adiantou.</p>'
+    +     '<label>Quantas você adiantou</label>'
+    /* Pergunta só o que o app NÃO tem como saber. As vencidas ele conta pelo
+       calendário; somar as duas coisas na cabeça é trabalho — e errar por um
+       desloca um mês inteiro. */
+    +     '<input id="ppAdiantadas" type="number" min="0" max="59" '
+    +     'oninput="parceladaDataMudou()" value="' + adiantadasIniciais + '">'
+    +     '<p class="ajuda">Só as que você pagou <b>antes da hora</b>. As que '
+    +     'venceram normalmente o app já contou.</p>'
     +   '</div>'
+    /* O total (vencidas + adiantadas) fica guardado aqui. É ele que o resto do
+       formulário lê, e é ele que vai para o registro. */
+    +   '<input type="hidden" id="ppPagas" value="' + pagasIniciais + '">'
     + '</div>'
 
     + '<div class="campo"><label>Categoria</label><select id="ppCat" '
@@ -3216,8 +2926,15 @@ function parceladaDeQuem(compra){
 function parceladaVencidas(ct, data, total){
   if(!ct || !data) return 0;
   const primeira = faturaDaCompra(data, ct.diaFechamento, ct.diaVencimento);
-  let n = Math.max(0, mesesEntre(primeira, mesAtual()));
-  if(total >= 2) n = Math.min(n, total - 1);
+  const hoje = hojeISO();
+  const limite = (total >= 1) ? total : 60;
+
+  /* Uma a uma, comparando a DATA de vencimento com hoje. Contar meses inteiros
+     era o defeito: uma fatura que vence dia 9 já venceu no dia 30 do mesmo mês,
+     e a diferença de meses ali é zero. */
+  let n = 0;
+  while(n < limite
+     && vencimentoDaFatura(mesMais(primeira, n), ct.diaVencimento) <= hoje) n++;
   return n;
 }
 
@@ -3230,23 +2947,27 @@ function parceladaDataMudou(){
   const ajuda = document.getElementById('ppPagasAjuda');
   const campo = document.getElementById('ppPagas');
   const cx    = document.getElementById('ppAdiantei');
-  const manual = !!(cx && cx.checked);
+  const total = Number(v('ppTotal')) || 0;
 
-  const venceram = parceladaVencidas(ct, data, Number(v('ppTotal')) || 0);
+  const venceram   = parceladaVencidas(ct, data, total);
+  const adiantadas = (cx && cx.checked) ? Math.max(0, Number(v('ppAdiantadas')) || 0) : 0;
 
-  if(campo && !manual) campo.value = venceram;
+  /* O total de pagas é a soma das duas: o que o calendário explica mais o que
+     só a pessoa sabe. */
+  if(campo) campo.value = venceram + adiantadas;
 
   if(ajuda){
     if(!data){
       ajuda.textContent = 'Preencha a data e o app conta sozinho quantas já venceram.';
-    } else if(manual){
-      ajuda.textContent = 'Pela data seriam ' + venceram
-        + ', mas você marcou que adiantou — vale o número que estiver abaixo.';
     } else {
-      ajuda.textContent = venceram === 0
-        ? 'Nenhuma parcela venceu ainda — o app cria todas.'
-        : venceram + (venceram === 1 ? ' parcela já venceu' : ' parcelas já venceram')
-          + ' — o app cria só as que faltam.';
+      const base = venceram === 0
+        ? 'Pela data, nenhuma parcela venceu ainda.'
+        : 'Pela data, ' + venceram
+          + (venceram === 1 ? ' parcela já venceu.' : ' parcelas já venceram.');
+      ajuda.innerHTML = base + (adiantadas > 0
+        ? ' Com ' + adiantadas + (adiantadas === 1 ? ' adiantada' : ' adiantadas')
+          + ', são <b>' + (venceram + adiantadas) + ' de ' + total + ' pagas</b>.'
+        : '');
     }
   }
   parceladaResumo();
@@ -3272,7 +2993,8 @@ function parceladaResumo(){
 
   if(!ct || parcela <= 0 || n < 2){ el.textContent = ''; return; }
   if(pagas >= n){
-    el.innerHTML = '<b>As já pagas precisam ser menos que o total.</b>';
+    el.innerHTML = '<b>Pela data, todas as ' + n + ' parcelas já venceram — não '
+      + 'sobrou nenhuma para lançar.</b><br>Confira a data da compra ou o total.';
     return;
   }
 
@@ -3281,6 +3003,7 @@ function parceladaResumo(){
   const faltam = n - pagas;
 
   el.innerHTML = n + '× de ' + fmt(parcela) + ' · total ' + fmt(parcela * n) + '<br>'
+    + '<b>' + pagas + ' de ' + n + ' já pagas</b> · '
     + faltam + (faltam === 1 ? ' parcela entra' : ' parcelas entram') + ' no app: '
     + nomeMes(mesMais(primeira, pagas)) + ' até ' + nomeMes(mesMais(primeira, n - 1));
 }
