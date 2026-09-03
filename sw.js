@@ -1,6 +1,6 @@
 /* Service worker do Financas Casal - GERADO por fonte/build-github.sh.
    Nao edite a mao: o proximo build sobrescreve. */
-const VERSAO_CACHE = '2026-09-02-22-26';
+const VERSAO_CACHE = '2026-09-02-22-30';
 /* Corpo do service worker. O build-github.sh cola o `const VERSAO_CACHE` acima
    disto e grava o resultado em ../sw.js - NAO registre este arquivo diretamente.
 
@@ -11,7 +11,7 @@ const VERSAO_CACHE = '2026-09-02-22-26';
    e os vales vivem no localStorage, que o cache do service worker nao alcanca.
    Limpar o cache aqui nunca apaga lancamento nenhum. */
 
-const CACHE = 'bela-angra-' + VERSAO_CACHE;
+const CACHE = 'financas-casal-' + VERSAO_CACHE;
 /* Os icones entram no cache porque agora sao ARQUIVO, nao data URI dentro do
    HTML. Sem isto o app abre offline sem o icone da barra de endereco. */
 const ARQUIVOS = ['./', './index.html', './icone-180.png', './icone-512.png'];
@@ -31,12 +31,16 @@ self.addEventListener('install', function(ev){
      recarregaria a pagina e faria ele perder o que estava digitando. */
 });
 
-/* ---- ativar: joga fora os caches das versoes anteriores ---- */
+/* ---- ativar: joga fora os caches das versoes anteriores ----
+   Apaga QUALQUER cache deste escopo que nao seja o de agora — nao so' os que
+   comecam com 'financas-casal-'. O nome mudou de 'bela-angra-' (copiado do RH
+   sem querer, ate 02/09/2026); sem isso os caches velhos com o nome antigo
+   ficariam esquecidos para sempre nos aparelhos que ja tinham o app instalado. */
 self.addEventListener('activate', function(ev){
   ev.waitUntil(
     caches.keys().then(function(nomes){
       return Promise.all(nomes.map(function(n){
-        if(n !== CACHE && n.indexOf('bela-angra-') === 0) return caches.delete(n);
+        if(n !== CACHE) return caches.delete(n);
       }));
     }).then(function(){ return self.clients.claim(); })
   );
