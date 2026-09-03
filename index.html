@@ -12,7 +12,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Finanças">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="theme-color" content="#4f46e5">
+<meta name="theme-color" content="#7C5CBF">
 
 <!-- ÍCONE DA TELA DE INÍCIO.
      Estes dois links precisam estar AQUI, no HTML servido. Criados por
@@ -33,33 +33,53 @@
    aproximar o rosto. Todo alvo clicável tem 44px de altura (--tap), que é o
    mínimo confortável para o dedo.
    ========================================================= */
+/* =========================================================
+   PALETA "PAPEL" — trocada em 02/09/2026 a pedido do Maycon, que achou o
+   app anterior (índigo/vidro) pouco acolhedor. Fundo cor de papel, tinta
+   escura, e cada área de dinheiro tem sua cor: violeta é a marca, verde é
+   o que sobra, tijolo é o que preocupa, âmbar é atenção, ouro é investimento.
+   Os NOMES das variáveis não mudaram — só o valor — então nenhum componente
+   precisou ser reescrito para herdar a paleta nova.
+   ========================================================= */
 :root{
-  --bg:#f4f6fb; --sup:#ffffff; --sup2:#eef1f7; --sup3:#e5e9f2;
-  --borda:#dfe4ee; --borda2:#c6cede;
-  --txt:#111827; --mut:#5b6678; --fra:#98a2b3;
+  --bg:#F6F3ED; --sup:#ffffff; --sup2:#EFEAE0; --sup3:#E7E1D3;
+  --borda:#E4DFD3; --borda2:#D2CBB9;
+  --txt:#211F2B; --mut:#6B6F7A; --fra:#98958A;
 
-  --ac:#4f46e5; --ac2:#7c3aed; --ac-fr:#eceafe;
-  --pos:#0e9f6e; --pos-fr:#e7f7f1;
-  --neg:#e02424; --neg-fr:#fdecec;
-  --ala:#c27803; --ala-fr:#fdf6e3;
-  --inv:#0694a2; --inv-fr:#e0f5f7;
+  --ac:#7C5CBF; --ac2:#6A4CAE; --ac-fr:#EFE9FA;
+  --pos:#2F7E6E; --pos-fr:#E4F3EE;
+  --neg:#BD4B3C; --neg-fr:#FBE8E4;
+  --ala:#C57A2E; --ala-fr:#FBEEDD;
+  --inv:#B08A22; --inv-fr:#F6EFD8;
 
-  --som:0 2px 4px rgba(17,24,39,.04), 0 8px 24px rgba(17,24,39,.06);
-  --r:20px; --r2:14px;
+  /* Duas cores fixas para a barra lateral: ela fica escura sempre, nos dois
+     temas — é a marca do app, não muda com o modo claro/escuro do aparelho. */
+  --barra-bg:#211E2A; --barra-texto:#C7C2D6; --barra-fraco:#847E96;
+  --barra-ativo:rgba(255,255,255,.12); --barra-hover:rgba(255,255,255,.07);
+  --barra-realce:#B9A3E8;
+
+  --serif:ui-serif,Georgia,'Iowan Old Style','Palatino Linotype','Book Antiqua','Times New Roman',serif;
+
+  --som:0 1px 2px rgba(33,31,43,.05), 0 10px 26px -14px rgba(33,31,43,.20);
+  --r:22px; --r2:16px;
   --tap:44px;
 }
 @media(prefers-color-scheme:dark){:root{
-  --bg:#080b12; --sup:#111725; --sup2:#1a2233; --sup3:#232c40;
-  --borda:#232c40; --borda2:#36415c;
-  --txt:#eaeef6; --mut:#9aa6ba; --fra:#6b7689;
+  --bg:#18161F; --sup:#211F29; --sup2:#292734; --sup3:#343048;
+  --borda:#343048; --borda2:#453f5c;
+  --txt:#ECE8F5; --mut:#A79FC0; --fra:#726c8a;
 
-  --ac:#7c74ff; --ac2:#a78bfa; --ac-fr:#1e1b45;
-  --pos:#34d399; --pos-fr:#06291f;
-  --neg:#f87171; --neg-fr:#331013;
-  --ala:#fbbf24; --ala-fr:#332608;
-  --inv:#22d3ee; --inv-fr:#062b31;
+  --ac:#A78BFA; --ac2:#c4b5fd; --ac-fr:#2E2645;
+  --pos:#4FBF9F; --pos-fr:#153A30;
+  --neg:#E8796A; --neg-fr:#3A2019;
+  --ala:#E0A053; --ala-fr:#3A2C14;
+  --inv:#D9BE55; --inv-fr:#39310f;
 
-  --som:0 2px 4px rgba(0,0,0,.3), 0 8px 28px rgba(0,0,0,.35);
+  --barra-bg:#0F0D16; --barra-texto:#C7C2D6; --barra-fraco:#7A7590;
+  --barra-ativo:rgba(255,255,255,.10); --barra-hover:rgba(255,255,255,.06);
+  --barra-realce:#C4B5FD;
+
+  --som:0 2px 4px rgba(0,0,0,.35), 0 10px 30px rgba(0,0,0,.4);
 }}
 
 *{box-sizing:border-box;margin:0;padding:0;border-color:var(--borda);}
@@ -86,42 +106,50 @@ body{
 
 /* ---------------------------------------------------------- LAYOUT */
 #app{display:flex;min-height:100vh;}
+/* A barra lateral fica ESCURA sempre, nos dois temas — é a marca do app,
+   igual ao modelo que o Maycon trouxe. Por isso usa as variáveis --barra-*,
+   que não mudam dentro do media query de modo escuro. */
 #sidebar{
-  width:248px;flex-shrink:0;background:var(--sup);
-  border-right:1px solid var(--borda);
+  width:248px;flex-shrink:0;background:var(--barra-bg);
+  border-right:1px solid var(--barra-bg);
   display:flex;flex-direction:column;
 }
 #sidebar .marca{
-  display:flex;align-items:center;gap:10px;padding:18px 16px;
-  border-bottom:1px solid var(--borda);font-size:17px;font-weight:650;
-  letter-spacing:-.02em;
+  display:flex;align-items:baseline;gap:9px;padding:20px 18px 18px;
+  border-bottom:1px solid rgba(255,255,255,.08);
+  font-family:var(--serif);font-size:19px;font-weight:600;
+  letter-spacing:-.01em;color:#fff;
 }
-#sidebar .marca em{font-style:normal;color:var(--ac);}
+#sidebar .marca em{font-style:normal;color:var(--barra-realce);}
+#sidebar .marca .ponto{
+  display:inline-flex;width:12px;height:12px;border-radius:50%;overflow:hidden;flex:none;
+}
+#sidebar .marca .ponto span{width:50%;height:100%;}
 #sidebar nav{flex:1;overflow-y:auto;padding:10px 12px;}
 .navbtn{
   display:flex;align-items:center;gap:10px;width:100%;text-align:left;
-  background:none;border:none;color:var(--mut);
+  background:none;border:none;color:var(--barra-texto);
   min-height:var(--tap);padding:0 14px;border-radius:12px;
   font-weight:500;font-size:15px;font-family:inherit;cursor:pointer;
   -webkit-tap-highlight-color:transparent;
 }
 .navbtn+.navbtn{margin-top:3px;}
-.navbtn.ativo{background:var(--ac-fr);color:var(--ac);font-weight:650;}
-.navbtn .ico{width:20px;height:20px;flex-shrink:0;opacity:.8;}
-.navbtn.ativo .ico{opacity:1;}
+.navbtn.ativo{background:var(--barra-ativo);color:#fff;font-weight:650;}
+.navbtn .ico{width:20px;height:20px;flex-shrink:0;opacity:.75;}
+.navbtn.ativo .ico{opacity:1;color:var(--barra-realce);}
 .navbtn .rot{min-width:0;overflow:hidden;text-overflow:ellipsis;}
-#sidebar .pe{padding:12px;border-top:1px solid var(--borda);font-size:12px;color:var(--fra);}
+#sidebar .pe{padding:12px;border-top:1px solid rgba(255,255,255,.08);font-size:12px;color:var(--barra-fraco);}
 /* Quem está lançando agora. É botão, não rótulo: no celular do casal um pega o
    aparelho do outro o tempo todo, e trocar precisa ser um toque. */
 #quemSou{
   display:flex;align-items:center;gap:9px;width:100%;
   min-height:var(--tap);padding:0 12px;
-  background:var(--sup2);border:1px solid var(--borda);border-radius:12px;
-  font-weight:600;font-size:14px;font-family:inherit;color:var(--txt);cursor:pointer;
+  background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14);border-radius:12px;
+  font-weight:600;font-size:14px;font-family:inherit;color:#fff;cursor:pointer;
   text-align:left;-webkit-tap-highlight-color:transparent;
 }
-#quemSou .rot{font-size:10px;font-weight:400;color:var(--fra);display:block;line-height:1;}
-#quemSou .seta{margin-left:auto;color:var(--fra);font-size:11px;}
+#quemSou .rot{font-size:10px;font-weight:400;color:var(--barra-fraco);display:block;line-height:1;}
+#quemSou .seta{margin-left:auto;color:var(--barra-fraco);font-size:11px;}
 #versaoApp{margin-top:8px;padding-left:2px;}
 
 #main{flex:1;min-width:0;display:flex;flex-direction:column;}
@@ -130,7 +158,7 @@ body{
   padding:14px 24px;display:flex;align-items:center;gap:12px;
   position:sticky;top:0;z-index:5;
 }
-#topbar h1{font-size:19px;font-weight:650;letter-spacing:-.02em;}
+#topbar h1{font-family:var(--serif);font-size:21px;font-weight:600;letter-spacing:-.01em;}
 #topbar .sub{font-size:12.5px;color:var(--mut);margin-top:1px;}
 #topbar .tit{min-width:0;flex:1;}
 #content{padding:24px 26px 56px;flex:1;min-width:0;}
@@ -145,7 +173,8 @@ body{
   padding:22px;margin-bottom:20px;
 }
 .card h2{
-  font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;
+  font-family:var(--serif);
+  font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;
   color:var(--fra);margin-bottom:14px;
 }
 .card h2 .aux{float:right;text-transform:none;letter-spacing:0;font-weight:600;
@@ -192,8 +221,8 @@ button:active,.btn:active,.navbtn:active,#quemSou:active{
    Sem este cerco o :hover COLA no celular: depois do toque o botão fica aceso
    até se tocar em outro lugar, e parece que continua selecionado. */
 @media (hover:hover) and (pointer:fine){
-  .navbtn:hover{background:var(--sup2);color:var(--txt);}
-  #quemSou:hover{border-color:var(--ac);}
+  .navbtn:hover{background:var(--barra-hover);color:#fff;}
+  #quemSou:hover{border-color:var(--barra-realce);}
   .btn-1:hover{filter:brightness(1.08);}
   .btn-2:hover{background:var(--sup2);color:var(--txt);}
   .btn-x:hover{background:var(--neg-fr);}
@@ -287,8 +316,8 @@ input::placeholder{color:var(--fra);}
 /* cartão de destaque do painel: onde mora o saldo */
 .heroi{
   border-radius:var(--r);padding:28px;color:#fff;position:relative;overflow:hidden;
-  background:linear-gradient(135deg,#4f46e5 0%,#7c3aed 55%,#9333ea 100%);
-  box-shadow:0 10px 30px rgba(79,70,229,.28);margin-bottom:20px;
+  background:linear-gradient(135deg,#6A4CAE 0%,#7C5CBF 55%,#9B7ED1 100%);
+  box-shadow:0 10px 30px rgba(124,92,191,.28);margin-bottom:20px;
 }
 /* brilho difuso; sem ele o gradiente fica chapado em tela grande */
 .heroi::after{
@@ -340,7 +369,7 @@ tr:last-child td{border-bottom:none;}
 .modal{background:var(--sup);border-radius:var(--r);max-width:640px;width:100%;
        padding:24px;margin:auto;}
 .modal.largo{max-width:900px;}
-.modal h2{font-size:18px;font-weight:650;margin-bottom:16px;text-transform:none;
+.modal h2{font-family:var(--serif);font-size:19px;font-weight:600;margin-bottom:16px;text-transform:none;
           letter-spacing:0;color:var(--txt);}
 .modal-acoes{display:flex;justify-content:flex-end;gap:8px;margin-top:18px;
              border-top:1px solid var(--borda);padding-top:16px;}
@@ -487,6 +516,7 @@ tr:last-child td{border-bottom:none;}
 
   <div id="sidebar">
     <div class="marca">
+      <span class="ponto"><span style="background:var(--ac)"></span><span style="background:var(--ala)"></span></span>
       Finanças <em>Casal</em>
       <button id="btnFecharGaveta" onclick="fecharGaveta()" aria-label="Fechar menu">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
@@ -525,7 +555,7 @@ tr:last-child td{border-bottom:none;}
 /* Versão do programa. NÃO editar à mão: o build.sh carimba a data e a hora
    aqui ao gerar o arquivo. É ela que nomeia o cache do service worker e faz o
    celular perceber que existe versão nova. */
-const VERSAO = '2026-08-30 19:24';
+const VERSAO = '2026-09-02 22:26';
 /* =========================================================
    FINANÇAS CASAL — offline, dados no localStorage
    Mayky e Mari. Ver CLAUDE.md para as regras de negócio.
@@ -987,13 +1017,17 @@ function marcado(id){ const e = document.getElementById(id); return e ? e.checke
    NAVEGAÇÃO
    --------------------------------------------------------- */
 const PAGINAS = [
-  {id:'painel',        rot:'Painel',        ic:'painel',  sub:'A visão do mês'},
-  {id:'lancamentos',   rot:'Lançamentos',   ic:'lista',   sub:'Entradas e saídas'},
-  {id:'investimentos', rot:'Investimentos', ic:'crescer', sub:'Reserva, metas e aportes'},
-  {id:'cartoes',       rot:'Cartões',       ic:'cartao',  sub:'Faturas e parcelas'},
-  {id:'planejamento',  rot:'Planejamento',  ic:'relogio', sub:'Os próximos 12 meses'},
-  {id:'ajustes',       rot:'Ajustes',       ic:'engren',  sub:'Cadastros e configurações'},
-  {id:'sync',          rot:'Sincronizar',   ic:'nuvem',   sub:'Juntar com os outros aparelhos'}
+  {id:'painel',        rot:'Painel',              ic:'painel',  sub:'A visão do mês'},
+  {id:'lancamentos',   rot:'Lançamentos',         ic:'lista',   sub:'Entradas e saídas'},
+  {id:'orcamento',     rot:'Orçamento',           ic:'alvo',    sub:'Teto por categoria, mês a mês'},
+  {id:'contas',        rot:'Contas & Cartões',    ic:'banco',   sub:'Onde o dinheiro vive'},
+  {id:'cartoes',       rot:'Faturas',             ic:'cartao',  sub:'Faturas e parcelas em andamento'},
+  {id:'categorias',    rot:'Categorias',          ic:'etiqueta',sub:'Como vocês organizam os gastos'},
+  {id:'investimentos', rot:'Investimentos & Metas',ic:'crescer',sub:'Reserva, metas e aportes'},
+  {id:'planejamento',  rot:'Planejamento',        ic:'relogio', sub:'Os próximos 12 meses e as contas fixas'},
+  {id:'pessoas',       rot:'Pessoas',             ic:'pessoas', sub:'Quem usa o app'},
+  {id:'ajustes',       rot:'Ajustes',             ic:'engren',  sub:'Aparelho, PIN e cópia de segurança'},
+  {id:'sync',          rot:'Sincronizar',         ic:'nuvem',   sub:'Juntar com os outros aparelhos'}
 ];
 
 /* Ícones em traço, herdando a cor pelo currentColor — acompanham o estado ativo
@@ -1005,7 +1039,11 @@ const ICONES = {
   cartao: '<rect x="2.8" y="5.5" width="18.4" height="13" rx="2.2"/><path d="M2.8 10h18.4"/>',
   relogio:'<circle cx="12" cy="12" r="8.2"/><path d="M12 7.4V12l3.2 1.9"/>',
   engren: '<circle cx="12" cy="12" r="3.1"/><path d="M19.4 14.6a1.5 1.5 0 0 0 .3 1.7l.1.1a1.8 1.8 0 1 1-2.6 2.6l-.1-.1a1.5 1.5 0 0 0-2.6 1.1v.2a1.8 1.8 0 1 1-3.6 0v-.2a1.5 1.5 0 0 0-2.6-1.1l-.1.1A1.8 1.8 0 1 1 5.6 16.3l.1-.1a1.5 1.5 0 0 0-1.1-2.6h-.2a1.8 1.8 0 1 1 0-3.6h.2a1.5 1.5 0 0 0 1.1-2.6l-.1-.1a1.8 1.8 0 1 1 2.6-2.6l.1.1a1.5 1.5 0 0 0 2.6-1.1v-.2a1.8 1.8 0 1 1 3.6 0v.2a1.5 1.5 0 0 0 2.6 1.1l.1-.1a1.8 1.8 0 1 1 2.6 2.6l-.1.1a1.5 1.5 0 0 0 1.1 2.6h.2a1.8 1.8 0 1 1 0 3.6h-.2a1.5 1.5 0 0 0-1.4.9Z"/>',
-  nuvem:  '<path d="M7 18.5A4 4 0 0 1 7.4 10.6a5.2 5.2 0 0 1 9.9-1.2A3.9 3.9 0 0 1 17.6 18"/><path d="M12 21v-9m0 0-2.6 2.6M12 12l2.6 2.6"/>'
+  nuvem:  '<path d="M7 18.5A4 4 0 0 1 7.4 10.6a5.2 5.2 0 0 1 9.9-1.2A3.9 3.9 0 0 1 17.6 18"/><path d="M12 21v-9m0 0-2.6 2.6M12 12l2.6 2.6"/>',
+  alvo:   '<circle cx="12" cy="12" r="8.3"/><circle cx="12" cy="12" r="4.6"/><circle cx="12" cy="12" r=".9" fill="currentColor" stroke="none"/>',
+  banco:  '<path d="M3 9.5 12 4l9 5.5"/><path d="M4.5 9.5v9M9 9.5v9M15 9.5v9M19.5 9.5v9"/><path d="M3 18.5h18"/>',
+  etiqueta:'<path d="M11.5 4H5a1 1 0 0 0-1 1v6.5a1 1 0 0 0 .3.7l9 9a1 1 0 0 0 1.4 0l6.5-6.5a1 1 0 0 0 0-1.4l-9-9a1 1 0 0 0-.7-.3Z"/><circle cx="8.2" cy="8.2" r="1.3" fill="currentColor" stroke="none"/>',
+  pessoas:'<circle cx="9" cy="8.3" r="3.1"/><path d="M2.8 19.5c.3-3.4 2.9-5.7 6.2-5.7s5.9 2.3 6.2 5.7"/><circle cx="17.3" cy="9" r="2.4"/><path d="M15.2 19.5c.2-2.5 1.7-4.3 3.7-4.9"/>'
 };
 function icone(nome){
   return '<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
@@ -1045,9 +1083,13 @@ function desenhar(){
   const telas = {
     painel:        desenharPainel,
     lancamentos:   desenharLancamentos,
-    investimentos: desenharInvestimentos,
+    orcamento:     desenharOrcamento,
+    contas:        desenharContas,
     cartoes:       desenharCartoes,
+    categorias:    desenharCategorias,
+    investimentos: desenharInvestimentos,
     planejamento:  desenharPlanejamento,
+    pessoas:       desenharPessoas,
     ajustes:       desenharAjustes,
     sync:          renderSync
   };
@@ -1321,8 +1363,8 @@ function barraRapida(){
       + '<h2>Antes de lançar</h2>'
       + '<p class="ajuda" style="margin-top:-8px">Cadastre pelo menos uma conta ou um '
       + 'cartão. É o que diz de onde o dinheiro sai.</p>'
-      + '<button class="btn btn-1" style="margin-top:12px" onclick="irPara(\'ajustes\')">'
-      + 'Ir para Ajustes</button></div>';
+      + '<button class="btn btn-1" style="margin-top:12px" onclick="irPara(\'contas\')">'
+      + 'Ir para Contas & Cartões</button></div>';
   }
 
   return '<div class="card">'
@@ -2060,11 +2102,16 @@ function projecao(meses){
 const GRUPO_ROTULO = {essencial:'Essencial', superfluo:'Supérfluo',
                       divida:'Dívida', investimento:'Investimento', receita:'Receita'};
 
+/* O painel mostra só o mês atual, de propósito (pedido do Maycon, 02/09/2026):
+   a projeção de 12 meses morava aqui e assustava com saldo negativo sempre que
+   uma parcela nova entrava sem o salário estar cadastrado como conta fixa —
+   informação real, mas fora de lugar numa tela que deveria responder "como
+   estou agora". Quem quiser ver o mês a mês entra em Planejamento por
+   escolha, já sabendo o que a projeção soma e o que ela ainda não sabe. */
 function desenharPainel(){
   const c = document.getElementById('content');
   const r = resumoDoMes(mesVisivel);
   const pat = patrimonio();
-  const proj = projecao(12);
 
   const faturasAbertas = DB.cartoes.reduce(function(s,ct){
     const f = faturaDoMes(ct.id, mesVisivel);
@@ -2075,7 +2122,6 @@ function desenharPainel(){
   }, 0);
 
   const disponivel = pat.caixa - faturasAbertas - r.previsto;
-  const quebra = proj.filter(function(p){ return p.saldo < 0; })[0];
 
   c.innerHTML =
     barraRapida()
@@ -2084,8 +2130,7 @@ function desenharPainel(){
   + primeirosPassos()
   + (pat.total > pat.caixa ? cartaoPatrimonio(pat) : '')
   + cartaoDoMes(r)
-  + (quebra ? avisoQuebra(quebra) : '')
-  + cartaoFuturo(proj);
+  + (DB.cartoes.length ? cartaoCartoesResumo() : '');
 }
 
 function heroiSaldo(caixa, disponivel, faturas, previsto){
@@ -2116,12 +2161,12 @@ function heroiSaldo(caixa, disponivel, faturas, previsto){
 /* Só aparece enquanto falta configurar. Some sozinho quando tudo está pronto. */
 function primeirosPassos(){
   const passos = [
-    {ok: DB.contas.length > 0,  txt:'Cadastrar as contas',
+    {ok: DB.contas.length > 0,  txt:'Cadastrar as contas', destino:'contas',
      det:'Com o saldo de hoje em cada uma. É a base do número lá em cima.'},
-    {ok: DB.cartoes.length > 0, txt:'Cadastrar os cartões',
+    {ok: DB.cartoes.length > 0, txt:'Cadastrar os cartões', destino:'contas',
      det:'Com o dia de fechamento e o de vencimento — é o que põe cada parcela na fatura certa.'},
-    {ok: DB.lancamentos.length > 0, txt:'Fazer o primeiro lançamento',
-     det:'Pela barra do topo: escreva "mercado 150" e aperte Enter.'}
+    {ok: DB.lancamentos.length > 0, txt:'Fazer o primeiro lançamento', destino:'',
+     det:'Pelo botão "+ Lançar", ali em cima.'}
   ];
   if(passos.every(function(p){ return p.ok; })) return '';
 
@@ -2138,7 +2183,8 @@ function primeirosPassos(){
           + (p.ok ? '<s>' + p.txt + '</s>' : p.txt) + '</p>'
           + (p.ok ? '' : '<p class="ajuda" style="margin-top:2px">' + p.det + '</p>')
           + '</div>'
-          + (p.ok ? '' : '<button class="btn btn-2 btn-p" onclick="irPara(\'ajustes\')">Ir</button>')
+          + (p.ok ? '' : '<button class="btn btn-2 btn-p" onclick="'
+            + (p.destino ? 'irPara(\'' + p.destino + '\')' : 'formLancamento()') + '">Ir</button>')
           + '</div>';
       }).join('')
     + '</div>';
@@ -2295,39 +2341,6 @@ function blocoQuemGastou(r){
     + '<em>e</em> na pessoa que pagou.</p>';
 }
 
-function avisoQuebra(p){
-  return '<div class="aviso">'
-    + '<span class="ic">⚠</span>'
-    + '<div><p style="font-weight:650;color:var(--neg)">Pelo ritmo atual, o dinheiro acaba em '
-    + nomeMes(p.mes) + '.</p>'
-    + '<p class="p mut" style="margin-top:3px">O saldo previsto chega a ' + $(p.saldo)
-    + '. Já considera as parcelas compradas e as contas fixas cadastradas. '
-    + '<a href="#" onclick="irPara(\'planejamento\');return false" '
-    + 'style="color:var(--neg);text-decoration:underline">Ver o mês a mês</a>.</p></div></div>';
-}
-
-function cartaoFuturo(proj){
-  const proximos = proj.slice(1, 4);
-
-  return '<div class="card">'
-  + '<h2>O que vem pela frente<span class="aux" onclick="irPara(\'planejamento\')">Detalhar</span></h2>'
-  + graficoLinha(proj)
-  + '<div class="grade g3" style="margin-top:18px">'
-  + proximos.map(function(p){
-      return '<div><p class="p mut">' + nomeMes(p.mes) + '</p>'
-        + '<p class="n-s tab ' + (p.saldo>=0?'pos':'neg') + '">' + $(p.saldo) + '</p>'
-        + '<p class="pp fra" style="margin-top:2px">'
-        + (p.parcelas ? $(p.parcelas) + ' em parcelas' : '')
-        + (p.parcelas && p.fixas ? ' · ' : '')
-        + (p.fixas ? $(p.fixas) + ' fixas' : '')
-        + (!p.parcelas && !p.fixas ? 'Sem compromissos' : '')
-        + '</p></div>';
-    }).join('')
-  + '</div>'
-  + (DB.cartoes.length ? blocoCartoesResumo() : '')
-  + '</div>';
-}
-
 /* Gráfico de linha em SVG puro — sem biblioteca, para o arquivo continuar único. */
 function graficoLinha(proj){
   const L = 440, A = 170, esq = 44, base = 26;
@@ -2365,8 +2378,10 @@ function graficoLinha(proj){
     + '</svg>';
 }
 
-function blocoCartoesResumo(){
-  return '<div style="height:1px;background:var(--borda);margin:20px 0"></div>'
+/* Estado ATUAL dos cartões — fatura deste mês e quanto do limite está
+   comprometido. Não é projeção: nenhum mês além do visível entra aqui. */
+function cartaoCartoesResumo(){
+  return '<div class="card">'
     + '<h2>Cartões<span class="aux" onclick="irPara(\'cartoes\')">Ver faturas</span></h2>'
     + DB.cartoes.map(function(ct, i){
         const fat = faturaDoMes(ct.id, mesVisivel);
@@ -2390,7 +2405,8 @@ function blocoCartoesResumo(){
           +   fmtDiaMes(vencimentoDaFatura(mesVisivel, ct.diaVencimento))
           +   (div > fat ? ' · ' + $(div) + ' de dívida total' : '') + '</p>'
           + '</div></div>';
-      }).join('');
+      }).join('')
+    + '</div>';
 }
 /* =========================================================
    CARTÕES — faturas, limite comprometido e parcelas em andamento
@@ -2401,10 +2417,10 @@ function desenharCartoes(){
 
   if(!DB.cartoes.length){
     c.innerHTML = '<div class="card vazio">Nenhum cartão cadastrado.<br>'
-      + '<span class="p">Cadastre em Ajustes, com o dia de fechamento e o de vencimento — '
-      + 'é o que põe cada compra na fatura certa.</span><br>'
-      + '<button class="btn btn-1" style="margin-top:16px" onclick="irPara(\'ajustes\')">'
-      + 'Ir para Ajustes</button></div>';
+      + '<span class="p">Cadastre em Contas &amp; Cartões, com o dia de fechamento e o de '
+      + 'vencimento — é o que põe cada compra na fatura certa.</span><br>'
+      + '<button class="btn btn-1" style="margin-top:16px" onclick="irPara(\'contas\')">'
+      + 'Ir para Contas & Cartões</button></div>';
     return;
   }
 
@@ -3143,27 +3159,7 @@ function desenharPlanejamento(){
   + 'é o mês em que o dinheiro sai de verdade. Por isso um mês pode começar já com parte '
   + 'do orçamento comprometida pelo que foi comprado no crédito no mês anterior.</p>'
 
-  + '<div class="card">'
-  + '<h2>Contas fixas<span class="aux" onclick="irPara(\'ajustes\')">Gerenciar</span></h2>'
-  + (DB.recorrentes.length
-    ? DB.recorrentes.filter(function(r){ return r.ativo; }).map(function(r, i){
-        const cat = categoria(r.categoriaId);
-        const p = pessoa(r.pessoaId);
-        return '<div style="display:flex;gap:12px;align-items:center;padding:10px 0'
-          + (i===0?'':';border-top:1px solid var(--borda)') + '">'
-          + '<span class="ic-t" style="background:' + (cat?cat.cor:'#94a3b8') + '1f">'
-          + (cat?cat.icone:'•') + '</span>'
-          + '<div style="flex:1;min-width:0">'
-          +   '<p style="font-weight:500">' + esc(r.descricao) + '</p>'
-          +   '<p class="pp fra">todo dia ' + r.dia
-          +   (cat ? ' · ' + esc(cat.nome) : '') + (p ? ' · ' + esc(p.nome) : '') + '</p>'
-          + '</div>'
-          + '<span class="tab ' + (r.tipo==='entrada'?'pos':'neg') + '" style="font-weight:650">'
-          + (r.tipo==='entrada'?'+':'−') + $(r.valor) + '</span></div>';
-      }).join('')
-    : '<p class="ajuda">Nenhuma conta fixa cadastrada. Sem elas a projeção acima é só '
-      + 'o retrovisor — cadastre salário, aluguel e assinaturas para ela virar previsão.</p>')
-  + '</div>'
+  + listaFixas()
 
   + blocoLancarFixas();
 }
@@ -3487,7 +3483,7 @@ function salvarAporte(metaId){
    Nada vem cadastrado de fábrica: conta, cartão e pessoa se cadastram aqui.
    ========================================================= */
 
-const CORES = ['#4f46e5','#0ea5e9','#0e9f6e','#f59e0b','#e02424','#ec4899','#8b5cf6','#64748b'];
+const CORES = ['#7C5CBF','#4C8FA6','#2F7E6E','#C57A2E','#BD4B3C','#B15D8C','#B08A22','#64748b'];
 const ICONES_CAT = ['•','🛒','🥬','🥐','🍔','🏠','💡','⛽','🚗','🏥','💊','📱','🐈','🐕',
                     '🎉','🏋️','🛍️','📺','🎓','💼','💰','📈','🏦','⚠️','✈️','🌧️','🎁','💇','🔧'];
 const TIPOS_CONTA = {corrente:'Conta corrente', dinheiro:'Dinheiro',
@@ -3495,29 +3491,29 @@ const TIPOS_CONTA = {corrente:'Conta corrente', dinheiro:'Dinheiro',
 const GRUPOS_SAIDA = {essencial:'Essencial', superfluo:'Supérfluo',
                       divida:'Dívida', investimento:'Investimento'};
 
-let abaAjustes = 'cadastros';
-
+/* Cada assunto de cadastro tem página própria — Pessoas, Contas & Cartões,
+   Categorias e Orçamento — porque empilhados numa "Ajustes" só era exatamente
+   o que fazia ninguém achar onde ficava cada coisa (pedido do Maycon,
+   02/09/2026). Esta função sobra só com o que é do APARELHO: PIN, privacidade
+   e cópia de segurança. */
 function desenharAjustes(){
-  const c = document.getElementById('content');
-  c.innerHTML =
-    '<div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap">'
-    + [['cadastros','Cadastros'],['orcamento','Orçamento'],['config','Configurações']]
-      .map(function(a){
-        const on = abaAjustes === a[0];
-        return '<button class="btn ' + (on?'btn-1':'btn-2') + '" '
-          + 'onclick="abaAjustes=\'' + a[0] + '\'; desenhar()">' + a[1] + '</button>';
-      }).join('')
-    + '</div>'
-    + (abaAjustes === 'cadastros' ? blocoCadastros()
-     : abaAjustes === 'orcamento' ? blocoOrcamento()
-     : blocoConfiguracoes());
+  document.getElementById('content').innerHTML = blocoConfiguracoes();
 }
 
-/* ---------------------------------------------------------
-   CADASTROS
-   --------------------------------------------------------- */
-function blocoCadastros(){
-  return listaPessoas() + listaContas() + listaCartoes() + listaCategorias() + listaFixas();
+function desenharPessoas(){
+  document.getElementById('content').innerHTML = listaPessoas();
+}
+
+function desenharContas(){
+  document.getElementById('content').innerHTML = listaContas() + listaCartoes();
+}
+
+function desenharCategorias(){
+  document.getElementById('content').innerHTML = listaCategorias();
+}
+
+function desenharOrcamento(){
+  document.getElementById('content').innerHTML = blocoOrcamento();
 }
 
 function cabecalho(titulo, ajuda, acao){
@@ -3692,7 +3688,7 @@ function listaCartoes(){
 
 function editarCartao(id){
   const ct = id ? cartao(id)
-    : {id:'', nome:'', donoId:'', limite:0, diaFechamento:28, diaVencimento:5, cor:'#8b5cf6'};
+    : {id:'', nome:'', donoId:'', limite:0, diaFechamento:28, diaVencimento:5, cor:'#7C5CBF'};
   abrirModal(
     '<h2>' + (id ? 'Editar ' + esc(ct.nome) : 'Novo cartão') + '</h2>'
     + '<div class="campo"><label>Nome</label>'
@@ -3728,7 +3724,7 @@ function salvarCartao(id){
   const dados = {
     nome: nome, diaFechamento: fecha, diaVencimento: vence,
     limite: lerDinheiro(v('kLimite')) || 0,
-    donoId: v('kDono') || '', cor: escolhido('kCor') || '#8b5cf6'
+    donoId: v('kDono') || '', cor: escolhido('kCor') || '#7C5CBF'
   };
 
   if(!id){
@@ -4304,7 +4300,7 @@ function precisaDestravar(){
 /* ---------------------------------------------------------
    A TELA — cobre o app inteiro enquanto não entrar
    --------------------------------------------------------- */
-const CORES_PESSOA = ['#4f46e5','#ec4899','#0e9f6e','#f59e0b','#0694a2','#8b5cf6'];
+const CORES_PESSOA = ['#7C5CBF','#B15D8C','#2F7E6E','#C57A2E','#4C8FA6','#B08A22'];
 const EMOJIS_PESSOA = ['🧑','👩','🧔','👱','🧒','👵','👴','🐈'];
 
 function telaCheia(html){
@@ -4767,7 +4763,7 @@ function atualizarRodape(){
    várias vezes por semana.
    --------------------------------------------------------- */
 function trocarPessoa(){
-  if(!DB.pessoas.length){ irPara('ajustes'); return; }
+  if(!DB.pessoas.length){ irPara('pessoas'); return; }
 
   abrirModal(
     '<h2>Quem está lançando?</h2>'
@@ -4789,7 +4785,7 @@ function trocarPessoa(){
       }).join('')
     + '</div>'
     + '<div class="modal-acoes" style="justify-content:space-between">'
-    + '<button class="btn btn-2" onclick="fecharModal(); irPara(\'ajustes\')">'
+    + '<button class="btn btn-2" onclick="fecharModal(); irPara(\'pessoas\')">'
     + 'Gerenciar pessoas</button>'
     + '<span>'
     + (DB.pessoas.some(function(p){ return p.pinHash; })
@@ -6254,10 +6250,10 @@ window.addEventListener('resize', function(){
 })();
 /* =========================================================
    ADAPTAÇÕES DA VERSÃO PUBLICADA NO GITHUB PAGES (celular e tablet)
-   Só entra no build-github.sh — o app local (bela-angra-rh.html) não usa
+   Só entra no build-github.sh — o app local (financas-casal.html) não usa
    este arquivo, porque no PC ele é aberto direto do disco.
 
-   Endereço: https://construcoesbelaangra.github.io/BELA-ANGRA-APP/
+   Endereço: https://marianambs.github.io/financas-casal/
 
    Faz três coisas:
    1. Registra o service worker, que é o que permite o app ABRIR SEM INTERNET.
@@ -6407,8 +6403,8 @@ window.addEventListener('resize', function(){
       start_url: './',
       scope: './',
       display: 'standalone',
-      background_color: '#f4f6fb',
-      theme_color: '#4f46e5',
+      background_color: '#F6F3ED',
+      theme_color: '#7C5CBF',
       lang: 'pt-BR',
       /* maskable além de any: o Android recorta o ícone em círculo ou
          quadrado conforme o launcher, e sem esta dica ele desenha o nosso
